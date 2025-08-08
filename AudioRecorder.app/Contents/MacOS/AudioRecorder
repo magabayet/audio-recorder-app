@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# Launcher para Audio Recorder
+APP_DIR="/Users/miguelgabayetbodington/LOC_PROGRAM/JUL25/RECORDER"
+
+# Abrir Terminal y ejecutar el comando
+osascript -e "
+tell application \"Terminal\"
+    activate
+    do script \"cd '$APP_DIR' && ./AudioRecorder.command\"
+end tell
+"

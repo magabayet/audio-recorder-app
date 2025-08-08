@@ -1,0 +1,351 @@
+.App {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.App-header {
+  padding: 2rem;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.App-header h1 {
+  margin: 0;
+  font-size: 2.5rem;
+  font-weight: 700;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.api-warning {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 193, 7, 0.2);
+  border-radius: 10px;
+  font-size: 0.9rem;
+}
+
+.App-main {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.recording-section {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border-radius: 20px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+.recording-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+  margin-bottom: 1rem;
+}
+
+.record-button, .stop-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 2rem;
+  font-size: 1.2rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+}
+
+.record-button {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.record-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+}
+
+.record-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.stop-button {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  color: white;
+}
+
+.stop-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+}
+
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 30px;
+  backdrop-filter: blur(10px);
+}
+
+.recording-dot {
+  width: 12px;
+  height: 12px;
+  background: #ff4444;
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 68, 68, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 68, 68, 0);
+  }
+}
+
+.recording-time {
+  font-size: 1.2rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.visualizer-container {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 15px;
+  overflow: hidden;
+}
+
+.error-message {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: rgba(245, 87, 108, 0.2);
+  border: 1px solid rgba(245, 87, 108, 0.5);
+  border-radius: 10px;
+  color: #fff;
+  text-align: center;
+}
+
+.recordings-section {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border-radius: 20px;
+  padding: 2rem;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+}
+
+.recordings-section h2 {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  font-size: 2rem;
+  text-align: center;
+}
+
+.no-recordings {
+  text-align: center;
+  opacity: 0.7;
+  font-size: 1.1rem;
+}
+
+.recordings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.recording-item-container {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 15px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.recording-item-container:hover {
+  transform: translateX(5px);
+}
+
+.recording-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 15px;
+}
+
+.recording-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+}
+
+.recording-name {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.recording-meta {
+  opacity: 0.8;
+  font-size: 0.9rem;
+}
+
+.recording-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.transcribing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  font-size: 0.9rem;
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.action-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-decoration: none;
+}
+
+.action-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.action-button.play:hover {
+  background: rgba(102, 126, 234, 0.5);
+}
+
+.action-button.download:hover {
+  background: rgba(72, 187, 120, 0.5);
+}
+
+.action-button.delete:hover {
+  background: rgba(245, 87, 108, 0.5);
+}
+
+.action-button.transcribe:hover,
+.action-button.transcription-toggle:hover {
+  background: rgba(255, 193, 7, 0.5);
+}
+
+.transcription-section {
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.transcription-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.transcription-header h4 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.transcription-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.transcription-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.transcription-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.transcription-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.transcription-text {
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  line-height: 1.6;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.transcription-text::-webkit-scrollbar {
+  width: 8px;
+}
+
+.transcription-text::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.transcription-text::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+}
+
+.transcription-text::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}

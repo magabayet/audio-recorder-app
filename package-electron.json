@@ -1,0 +1,100 @@
+{
+  "name": "audio-recorder-desktop",
+  "version": "1.0.0",
+  "description": "Audio Recorder - Grabador de Audio del Sistema con Transcripción",
+  "main": "electron-main.js",
+  "author": "Miguel Gabayet",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently \"npm run dev-backend\" \"npm run dev-frontend\" \"wait-on http://localhost:3000 && electron .\"",
+    "dev-backend": "cd backend && npm run dev",
+    "dev-frontend": "cd frontend && npm start",
+    "build-frontend": "cd frontend && npm run build",
+    "build": "npm run build-frontend && electron-builder",
+    "dist": "npm run build-frontend && electron-builder --mac",
+    "dist-all": "npm run build-frontend && electron-builder -mwl",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "electron-is-dev": "^2.0.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4",
+    "wait-on": "^7.0.1"
+  },
+  "build": {
+    "appId": "com.miguelgabayet.audiorecorder",
+    "productName": "Audio Recorder",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron-main.js",
+      "backend/**/*",
+      "frontend/build/**/*",
+      "assets/**/*",
+      "recordings/.gitkeep",
+      "transcriptions/.gitkeep",
+      "node_modules/**/*",
+      "!**/*.map",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/.env",
+        "to": ".env"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist",
+      "gatekeeperAssess": false,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
