@@ -1,5 +1,7 @@
 # Audio Recorder - Grabador de Audio del Sistema con Transcripción
 
+🔗 **GitHub Repository**: [https://github.com/magabayet/audio-recorder-app](https://github.com/magabayet/audio-recorder-app)
+
 Aplicación para grabar audio del sistema en macOS con transcripción automática usando OpenAI Whisper. Captura tanto el micrófono como los altavoces (incluyendo llamadas de Zoom y otras aplicaciones).
 
 ## Requisitos Previos
