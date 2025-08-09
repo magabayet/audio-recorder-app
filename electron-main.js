@@ -48,7 +48,7 @@ function createWindow() {
 
   // Cargar la aplicación
   const startUrl = isDev 
-    ? 'http://localhost:3000' 
+    ? 'http://localhost:4444' 
     : `file://${path.join(__dirname, 'frontend/build/index.html')}`;
   
   mainWindow.loadURL(startUrl);

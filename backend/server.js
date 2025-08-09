@@ -714,7 +714,7 @@ app.post('/api/review-text', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5555;
+const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

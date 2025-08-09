@@ -5,7 +5,7 @@ const { spawn } = require('child_process');
 
 // Configuración de la app de menubar
 const mb = menubar({
-  index: 'http://localhost:3000',
+  index: 'http://localhost:4444',
   icon: path.join(__dirname, 'assets', 'tray-icon.png'),
   tooltip: 'Audio Recorder',
   width: 800,

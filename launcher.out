@@ -1,0 +1,58 @@
+[3J[H[2J[0;36m╔════════════════════════════════════════════════════════╗[0m
+[0;36m║[0m  [1m🎙️  Audio Recorder[0m - Sistema de Grabación           [0;36m║[0m
+[0;36m║[0m       con Transcripción Automática                     [0;36m║[0m
+[0;36m╚════════════════════════════════════════════════════════╝[0m
+
+[0;34m▶[0m Verificando requisitos del sistema...
+
+[0;32m✓[0m Node.js instalado
+[0;32m✓[0m NPM instalado
+[0;32m✓[0m FFmpeg instalado
+
+[0;34m▶[0m Verificando configuración...
+[0;32m✓[0m API key de OpenAI configurada
+[0;32m✓[0m Las transcripciones funcionarán correctamente
+
+[0;34m▶[0m Verificando puertos...
+[0;32m✓[0m Puerto backend 5001 disponible
+[0;32m✓[0m Puerto frontend 4444 disponible
+
+[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;36mIniciando aplicación...[0m
+[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+
+[0;34m▶[0m Iniciando servidor backend...
+[0;32m✓[0m Servidor backend iniciado (PID: 3149)
+[0;34m▶[0m Iniciando interfaz de usuario...
+[0;34m▶[0m Esperando a que la interfaz esté lista...
+...[0;32m✓[0m Interfaz de usuario lista (PID: 3169)
+
+
+[0;32m╔════════════════════════════════════════════════════════╗[0m
+[0;32m║[0m  [1m✅ Aplicación iniciada correctamente[0m                 [0;32m║[0m
+[0;32m╚════════════════════════════════════════════════════════╝[0m
+
+[0;36m📍 Accesos:[0m
+   [1mInterfaz:[0m http://localhost:4444
+   [1mServidor:[0m http://localhost:5001
+
+[0;35m⌨️  Atajos:[0m
+   [1mCtrl+C[0m - Detener aplicación
+   [1mCmd+Tab[0m - Cambiar entre ventanas
+
+[1;33m💡 Tip:[0m Arrastra este archivo al Dock para acceso rápido
+
+[0;34m▶[0m Abriendo navegador...
+
+[0;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[0;32mLa aplicación está ejecutándose[0m
+[1;33mMantén esta ventana abierta mientras uses la app[0m
+[0;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+./AudioRecorder.command: line 252:  3149 Killed: 9               PORT=$BACKEND_PORT node server.js > ../backend.log 2>&1  (wd: ~/LOC_PROGRAM/JUL25/RECORDER/backend)
+
+[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+[1;33mCerrando Audio Recorder...[0m
+[0;32m✓[0m Servidor backend detenido
+[0;32m✓[0m Interfaz de usuario detenida
+[0;32m✓[0m Aplicación cerrada correctamente
+[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m

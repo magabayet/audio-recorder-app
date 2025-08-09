@@ -8,7 +8,7 @@
 # Configuración
 APP_NAME="Audio Recorder"
 BACKEND_PORT=5001
-FRONTEND_PORT=3000
+FRONTEND_PORT=4444
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Colores para output

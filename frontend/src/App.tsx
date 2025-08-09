@@ -45,7 +45,12 @@ function App() {
   const [showRevisedText, setShowRevisedText] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const newSocket = io('http://localhost:5555');
+    // Obtener el puerto del backend desde variable de entorno o usar el default
+    const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
+    const backendUrl = `http://localhost:${backendPort}`;
+    console.log('Connecting to backend at:', backendUrl);
+    
+    const newSocket = io(backendUrl);
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
@@ -211,7 +216,8 @@ function App() {
         .replace('.txt', '_revised.txt').replace('_revised_revised', '_revised');
       
       // Descargar la versión revisada
-      const response = await fetch(`http://localhost:5555/download-transcription/${fileName}?revised=true`);
+      const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
+      const response = await fetch(`http://localhost:${backendPort}/download-transcription/${fileName}?revised=true`);
       
       if (!response.ok) {
         const error = await response.json();
@@ -254,7 +260,8 @@ function App() {
     formData.append('audio', file);
 
     try {
-      const response = await fetch('http://localhost:5555/upload', {
+      const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
+      const response = await fetch(`http://localhost:${backendPort}/upload`, {
         method: 'POST',
         body: formData
       });
@@ -288,7 +295,8 @@ function App() {
       setReviewingFiles(prev => new Set(Array.from(prev).concat(fileName)));
       setError(null);
       
-      const response = await fetch('http://localhost:5555/api/review-text', {
+      const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
+      const response = await fetch(`http://localhost:${backendPort}/api/review-text`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -363,7 +371,8 @@ function App() {
         .replace('.webm', '.txt').replace('.flac', '.txt');
       
       // Verificar si el archivo existe antes de intentar descargarlo
-      const response = await fetch(`http://localhost:5555/download-transcription/${fileName}`);
+      const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
+      const response = await fetch(`http://localhost:${backendPort}/download-transcription/${fileName}`);
       
       if (!response.ok) {
         const error = await response.json();
@@ -405,6 +414,36 @@ function App() {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  const truncateFileName = (fileName: string, maxLength: number = 50) => {
+    if (fileName.length <= maxLength) return fileName;
+    
+    // Para archivos subidos, mantener el prefijo y extensión
+    if (fileName.startsWith('uploaded_')) {
+      const parts = fileName.match(/^(uploaded_\d+_)(.+)(\.\w+)$/);
+      if (parts) {
+        const [, prefix, name, ext] = parts;
+        const maxNameLength = maxLength - prefix.length - ext.length - 3; // 3 for '...'
+        if (name.length > maxNameLength) {
+          return prefix + name.substring(0, maxNameLength) + '...' + ext;
+        }
+      }
+    }
+    
+    // Para otros archivos, mantener extensión
+    const lastDotIndex = fileName.lastIndexOf('.');
+    if (lastDotIndex > 0) {
+      const name = fileName.substring(0, lastDotIndex);
+      const ext = fileName.substring(lastDotIndex);
+      const maxNameLength = maxLength - ext.length - 3;
+      if (name.length > maxNameLength) {
+        return name.substring(0, maxNameLength) + '...' + ext;
+      }
+    }
+    
+    // Fallback para archivos sin extensión
+    return fileName.substring(0, maxLength - 3) + '...';
   };
 
   const playAudio = (path: string) => {
@@ -705,7 +744,9 @@ function App() {
                 <div key={recording.name} className="recording-item-container">
                   <div className="recording-item">
                     <div className="recording-info">
-                      <span className="recording-name">{recording.name}</span>
+                      <span className="recording-name" title={recording.name}>
+                        {truncateFileName(recording.name)}
+                      </span>
                       <span className="recording-meta">
                         {formatFileSize(recording.size)} • {new Date(recording.createdAt).toLocaleString()}
                       </span>
@@ -743,7 +784,7 @@ function App() {
                       </button>
                       
                       <a
-                        href={`http://localhost:5555${recording.path}`}
+                        href={`http://localhost:${process.env.REACT_APP_BACKEND_PORT || '5001'}${recording.path}`}
                         download={recording.name}
                         className="action-button download"
                         title="Descargar audio"
@@ -898,7 +939,7 @@ function App() {
 
         {playingAudio && (
           <audio
-            src={`http://localhost:5555${playingAudio}`}
+            src={`http://localhost:${process.env.REACT_APP_BACKEND_PORT || '5001'}${playingAudio}`}
             autoPlay
             onEnded={() => setPlayingAudio(null)}
           />
