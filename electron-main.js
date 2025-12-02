@@ -1,7 +1,10 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
-const isDev = require('electron-is-dev');
+const fs = require('fs');
+
+// Detectar si estamos en desarrollo verificando si existe el build de producción
+const isDev = !fs.existsSync(path.join(__dirname, 'frontend/build/index.html'));
 
 let mainWindow;
 let serverProcess;
@@ -38,24 +41,40 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: !isDev
+      webSecurity: false
     },
     icon: path.join(__dirname, 'assets', 'icon.png'),
-    titleBarStyle: 'hiddenInset',
-    backgroundColor: '#667eea',
-    show: false
+    backgroundColor: '#ffffff',
+    show: true,
+    center: true,
+    resizable: true
   });
 
   // Cargar la aplicación
   const startUrl = isDev 
-    ? 'http://localhost:4444' 
+    ? 'http://localhost:3000' 
     : `file://${path.join(__dirname, 'frontend/build/index.html')}`;
+  
+  console.log('Loading URL:', startUrl);
+  console.log('isDev:', isDev);
+  console.log('File exists:', fs.existsSync(path.join(__dirname, 'frontend/build/index.html')));
   
   mainWindow.loadURL(startUrl);
 
-  // Mostrar ventana cuando esté lista
-  mainWindow.once('ready-to-show', () => {
+  // Debug: Abrir DevTools en desarrollo
+  if (isDev) {
+    mainWindow.webContents.openDevTools();
+  }
+
+  // Eventos de depuración
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('Failed to load:', errorCode, errorDescription);
+  });
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('Page loaded successfully');
     mainWindow.show();
+    mainWindow.focus();
   });
 
   // Manejar cierre de ventana

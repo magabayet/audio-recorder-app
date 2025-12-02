@@ -32,14 +32,20 @@ const allowedOrigins = [
 const io = socketIo(server, {
   cors: {
     origin: function (origin, callback) {
-      // Permitir requests sin origin (ej. Postman, apps móviles)
+      console.log('Request from origin:', origin);
+      // Permitir requests sin origin (ej. file://, Electron, apps móviles)
       if (!origin) return callback(null, true);
+      
+      // Permitir file:// protocol para Electron
+      if (origin && origin.startsWith('file://')) {
+        return callback(null, true);
+      }
       
       if (allowedOrigins.indexOf(origin) !== -1) {
         callback(null, true);
       } else {
-        console.log('Origin not allowed by CORS:', origin);
-        callback(null, true); // En desarrollo, permitir todos los orígenes
+        console.log('Origin not in allowed list, but allowing anyway:', origin);
+        callback(null, true); // Permitir todos los orígenes para Electron
       }
     },
     methods: ["GET", "POST"],

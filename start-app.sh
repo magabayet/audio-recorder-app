@@ -43,9 +43,9 @@ if check_port 5001; then
     kill_port 5001
 fi
 
-if check_port 4444; then
-    echo -e "${YELLOW}Puerto 4444 está en uso${NC}"
-    kill_port 4444
+if check_port 3000; then
+    echo -e "${YELLOW}Puerto 3000 está en uso${NC}"
+    kill_port 3000
 fi
 
 # Instalar dependencias si no existen
@@ -78,7 +78,7 @@ cleanup() {
     echo -e "\n${YELLOW}🛑 Cerrando aplicación...${NC}"
     # Matar procesos del backend y frontend
     kill_port 5001
-    kill_port 4444
+    kill_port 3000
     # Matar procesos por nombre si existen
     pkill -f "node.*server.js" 2>/dev/null
     pkill -f "react-scripts start" 2>/dev/null
@@ -105,7 +105,7 @@ if ! kill -0 $BACKEND_PID 2>/dev/null; then
 fi
 
 # Iniciar el frontend
-echo -e "${GREEN}🌐 Iniciando aplicación web en puerto 4444...${NC}"
+echo -e "${GREEN}🌐 Iniciando aplicación web en puerto 3000...${NC}"
 cd frontend
 
 # Configurar variable de entorno para no abrir el navegador automáticamente
@@ -121,12 +121,12 @@ sleep 5
 
 # Abrir el navegador
 echo -e "${GREEN}🌍 Abriendo aplicación en el navegador...${NC}"
-open http://localhost:4444
+open http://localhost:3000
 
 echo -e "${GREEN}✅ Aplicación iniciada correctamente!${NC}"
 echo -e "${YELLOW}📝 Logs:${NC}"
 echo "   - Backend corriendo en: http://localhost:5001"
-echo "   - Frontend corriendo en: http://localhost:4444"
+echo "   - Frontend corriendo en: http://localhost:3000"
 echo ""
 echo -e "${YELLOW}Para detener la aplicación, presiona Ctrl+C${NC}"
 
