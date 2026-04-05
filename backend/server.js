@@ -12,7 +12,11 @@ const FormData = require('form-data');
 const multer = require('multer');
 const { findBestAudioDevice } = require('./audio-devices');
 const { splitAudioFile, combineTranscriptions } = require('./audio-splitter');
-require('dotenv').config();
+// En modo empaquetado, OPENAI_API_KEY llega como variable de entorno desde Electron.
+// En modo desarrollo, cargar desde .env local.
+if (!process.env.DATA_DIR) {
+  require('dotenv').config();
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -71,11 +75,14 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-app.use('/recordings', express.static(path.join(__dirname, '../recordings')));
-app.use('/transcriptions', express.static(path.join(__dirname, '../transcriptions')));
 
-const recordingsDir = path.join(__dirname, '../recordings');
-const transcriptionsDir = path.join(__dirname, '../transcriptions');
+// Directorios de datos: usar DATA_DIR si existe (modo empaquetado), si no, rutas relativas (desarrollo)
+const dataDir = process.env.DATA_DIR || path.join(__dirname, '..');
+const recordingsDir = path.join(dataDir, 'recordings');
+const transcriptionsDir = path.join(dataDir, 'transcriptions');
+
+app.use('/recordings', express.static(recordingsDir));
+app.use('/transcriptions', express.static(transcriptionsDir));
 
 if (!fsSync.existsSync(recordingsDir)) {
   fsSync.mkdirSync(recordingsDir, { recursive: true });
@@ -117,7 +124,7 @@ let activeRecordings = new Map();
 let recordingsMetadata = new Map();
 
 async function loadMetadata() {
-  const metadataPath = path.join(__dirname, '../metadata.json');
+  const metadataPath = path.join(dataDir, 'metadata.json');
   try {
     const data = await fs.readFile(metadataPath, 'utf8');
     const parsed = JSON.parse(data);
@@ -128,7 +135,7 @@ async function loadMetadata() {
 }
 
 async function saveMetadata() {
-  const metadataPath = path.join(__dirname, '../metadata.json');
+  const metadataPath = path.join(dataDir, 'metadata.json');
   const data = Object.fromEntries(recordingsMetadata);
   await fs.writeFile(metadataPath, JSON.stringify(data, null, 2));
 }
