@@ -14,6 +14,7 @@
     "@types/react-copy-to-clipboard": "^5.0.7",
     "@types/react-dom": "^19.1.7",
     "axios": "^1.11.0",
+    "firebase": "^12.11.0",
     "lucide-react": "^0.536.0",
     "react": "^19.1.1",
     "react-copy-to-clipboard": "^5.1.0",
