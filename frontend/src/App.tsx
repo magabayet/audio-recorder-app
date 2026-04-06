@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, Square, Download, Trash2, Play, Pause, Copy, FileText, Loader, Upload, X, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { Mic, Square, Download, Trash2, Play, Pause, Copy, FileText, Loader, Upload, X, AlertCircle, CheckCircle, Info, LogOut } from 'lucide-react';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
 import AudioVisualizer from './components/AudioVisualizer';
+import LoginScreen from './components/LoginScreen';
 import { useMediaRecorder } from './hooks/useMediaRecorder';
 import { onRecordingsChange, createRecording, deleteRecording as deleteRecordingDoc, type RecordingDoc } from './lib/firestore';
 import { uploadAudio, getFileURL, deleteFile } from './lib/storage';
+import { onAuthChange, signOut, getIdToken } from './lib/auth';
+import type { User } from 'firebase/auth';
 import './App.css';
 
 const CLOUD_RUN_URL = process.env.REACT_APP_CLOUD_RUN_URL || 'http://localhost:8080';
@@ -54,6 +57,42 @@ function useToasts() {
 // ─── App ─────────────────────────────────────────────────────────
 
 function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Escuchar estado de autenticación
+  useEffect(() => {
+    const unsubscribe = onAuthChange((u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
+  // Pantalla de carga mientras se verifica auth
+  if (authLoading) {
+    return (
+      <div className="App" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Loader size={32} className="spinning" />
+      </div>
+    );
+  }
+
+  // Si no hay usuario, mostrar login
+  if (!user) {
+    return <LoginScreen onLogin={() => {}} />;
+  }
+
+  return <AppContent user={user} onSignOut={handleSignOut} />;
+}
+
+// ─── Contenido principal (solo visible si está autenticado) ──────
+
+function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const recorder = useMediaRecorder();
   const [recordings, setRecordings] = useState<RecordingDoc[]>([]);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
@@ -106,6 +145,19 @@ function App() {
       addToast({ type: 'error', message: recorder.error });
     }
   }, [recorder.error, addToast]);
+
+  // Fetch autenticado para Cloud Run
+  const authFetch = async (url: string, options: RequestInit = {}) => {
+    const token = await getIdToken();
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+  };
 
   // Helper para marcar acciones en progreso y evitar doble clic
   const withBusy = async (key: string, fn: () => Promise<void>) => {
@@ -234,9 +286,8 @@ function App() {
       });
 
       try {
-        const response = await fetch(`${CLOUD_RUN_URL}/transcribe`, {
+        const response = await authFetch(`${CLOUD_RUN_URL}/transcribe`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             recordingId: recording.id,
             storagePath: recording.storagePath,
@@ -283,9 +334,8 @@ function App() {
       });
 
       try {
-        const response = await fetch(`${CLOUD_RUN_URL}/review`, {
+        const response = await authFetch(`${CLOUD_RUN_URL}/review`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             recordingId: recording.id,
             text: recording.transcription.text,
@@ -443,6 +493,13 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>Audio Recorder con Transcripción</h1>
+        <div className="user-bar">
+          <span className="user-email">{user.email}</span>
+          <button className="signout-button" onClick={onSignOut}>
+            <LogOut size={16} />
+            Cerrar Sesión
+          </button>
+        </div>
       </header>
 
       <main className="App-main">

@@ -2,10 +2,8 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Por ahora permitir lectura/escritura sin auth (fase inicial)
-    // TODO: Agregar Firebase Auth y restringir por usuario
     match /recordings/{recordingId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
   }
 }
