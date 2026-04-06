@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Square, Download, Trash2, Play, Pause, Copy, FileText, Loader, Upload } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Mic, Square, Download, Trash2, Play, Pause, Copy, FileText, Loader, Upload, X, AlertCircle, CheckCircle, Info } from 'lucide-react';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
 import AudioVisualizer from './components/AudioVisualizer';
 import { useMediaRecorder } from './hooks/useMediaRecorder';
@@ -9,10 +9,53 @@ import './App.css';
 
 const CLOUD_RUN_URL = process.env.REACT_APP_CLOUD_RUN_URL || 'http://localhost:8080';
 
+// ─── Sistema de Toasts ───────────────────────────────────────────
+
+interface Toast {
+  id: string;
+  type: 'info' | 'success' | 'error' | 'loading';
+  message: string;
+  detail?: string;
+  persistent?: boolean;
+}
+
+function useToasts() {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const counterRef = useRef(0);
+
+  const addToast = useCallback((toast: Omit<Toast, 'id'>): string => {
+    const id = `toast-${++counterRef.current}`;
+    setToasts(prev => [...prev, { ...toast, id }]);
+    if (!toast.persistent) {
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, toast.type === 'error' ? 6000 : 4000);
+    }
+    return id;
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const updateToast = useCallback((id: string, updates: Partial<Omit<Toast, 'id'>>) => {
+    setToasts(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+    // Si se actualiza a un tipo no-persistente, auto-remover
+    if (updates.persistent === false || (updates.type && updates.type !== 'loading')) {
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, updates.type === 'error' ? 6000 : 4000);
+    }
+  }, []);
+
+  return { toasts, addToast, removeToast, updateToast };
+}
+
+// ─── App ─────────────────────────────────────────────────────────
+
 function App() {
   const recorder = useMediaRecorder();
   const [recordings, setRecordings] = useState<RecordingDoc[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [playingURL, setPlayingURL] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -21,13 +64,38 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [reviewingFiles, setReviewingFiles] = useState<Set<string>>(new Set());
   const [showRevisedText, setShowRevisedText] = useState<Set<string>>(new Set());
 
-  // Escuchar cambios en tiempo real de Firestore (reemplaza Socket.IO)
+  // Estados locales inmediatos (no dependen de Firestore)
+  const [pendingTranscriptions, setPendingTranscriptions] = useState<Set<string>>(new Set());
+  const [pendingReviews, setPendingReviews] = useState<Set<string>>(new Set());
+  const [busyActions, setBusyActions] = useState<Set<string>>(new Set());
+
+  const { toasts, addToast, removeToast, updateToast } = useToasts();
+
+  // Escuchar cambios en tiempo real de Firestore
   useEffect(() => {
     const unsubscribe = onRecordingsChange((recs) => {
       setRecordings(recs);
+      // Limpiar pending states cuando Firestore confirma el status
+      setPendingTranscriptions(prev => {
+        const newSet = new Set(prev);
+        recs.forEach(r => {
+          if (r.transcription.status === 'processing' || r.transcription.status === 'completed' || r.transcription.status === 'error') {
+            newSet.delete(r.id);
+          }
+        });
+        return newSet;
+      });
+      setPendingReviews(prev => {
+        const newSet = new Set(prev);
+        recs.forEach(r => {
+          if (r.revision.status === 'completed' || r.revision.status === 'error') {
+            newSet.delete(r.id);
+          }
+        });
+        return newSet;
+      });
     });
     return () => unsubscribe();
   }, []);
@@ -35,32 +103,54 @@ function App() {
   // Mostrar errores del hook de grabación
   useEffect(() => {
     if (recorder.error) {
-      setError(recorder.error);
+      addToast({ type: 'error', message: recorder.error });
     }
-  }, [recorder.error]);
+  }, [recorder.error, addToast]);
+
+  // Helper para marcar acciones en progreso y evitar doble clic
+  const withBusy = async (key: string, fn: () => Promise<void>) => {
+    if (busyActions.has(key)) return;
+    setBusyActions(prev => new Set(prev).add(key));
+    try {
+      await fn();
+    } finally {
+      setBusyActions(prev => {
+        const s = new Set(prev);
+        s.delete(key);
+        return s;
+      });
+    }
+  };
 
   const handleStartRecording = async () => {
-    setError(null);
+    addToast({ type: 'info', message: 'Iniciando grabación...', detail: 'Permite el acceso al micrófono si el navegador lo solicita' });
     await recorder.startRecording();
   };
 
   const handleStopRecording = async () => {
+    const toastId = addToast({ type: 'loading', message: 'Guardando grabación...', persistent: true });
+
     const blob = await recorder.stopRecording();
-    if (!blob) return;
+    if (!blob) {
+      updateToast(toastId, { type: 'error', message: 'No se pudo obtener la grabación', persistent: false });
+      return;
+    }
 
     setIsUploading(true);
-    setError(null);
 
     try {
       const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
       const fileName = `mic_recording_${Date.now()}.${extension}`;
 
-      // Subir a Google Cloud Storage
+      updateToast(toastId, { message: 'Subiendo audio a la nube...', detail: '0%' });
+
       const { storagePath } = await uploadAudio(blob, fileName, (progress) => {
         setUploadProgress(progress);
+        updateToast(toastId, { detail: `${Math.round(progress)}%` });
       });
 
-      // Crear documento en Firestore
+      updateToast(toastId, { message: 'Registrando grabación...', detail: undefined });
+
       await createRecording({
         fileName,
         originalName: fileName,
@@ -69,10 +159,11 @@ function App() {
         storagePath,
       });
 
+      updateToast(toastId, { type: 'success', message: 'Grabación guardada', persistent: false });
       setUploadProgress(0);
     } catch (err) {
       console.error('Error guardando grabación:', err);
-      setError('Error al guardar la grabación');
+      updateToast(toastId, { type: 'error', message: 'Error al guardar la grabación', persistent: false });
     } finally {
       setIsUploading(false);
     }
@@ -83,11 +174,12 @@ function App() {
     if (!file) return;
 
     setIsUploading(true);
-    setError(null);
+    const toastId = addToast({ type: 'loading', message: `Subiendo ${file.name}...`, persistent: true });
 
     try {
       const { storagePath } = await uploadAudio(file, file.name, (progress) => {
         setUploadProgress(progress);
+        updateToast(toastId, { detail: `${Math.round(progress)}%` });
       });
 
       await createRecording({
@@ -98,10 +190,11 @@ function App() {
         storagePath,
       });
 
+      updateToast(toastId, { type: 'success', message: `${file.name} subido correctamente`, persistent: false });
       setUploadProgress(0);
     } catch (err) {
-      setError('Error al subir el archivo');
       console.error('Upload error:', err);
+      updateToast(toastId, { type: 'error', message: 'Error al subir el archivo', persistent: false });
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -111,74 +204,119 @@ function App() {
   };
 
   const handleDelete = async (recording: RecordingDoc) => {
-    try {
-      // Eliminar archivos de Storage
-      await deleteFile(recording.storagePath).catch(() => {});
-      if (recording.transcription.storagePath) {
-        await deleteFile(recording.transcription.storagePath).catch(() => {});
+    await withBusy(`delete-${recording.id}`, async () => {
+      const toastId = addToast({ type: 'loading', message: 'Eliminando grabación...', persistent: true });
+      try {
+        await deleteFile(recording.storagePath).catch(() => {});
+        if (recording.transcription.storagePath) {
+          await deleteFile(recording.transcription.storagePath).catch(() => {});
+        }
+        if (recording.revision.storagePath) {
+          await deleteFile(recording.revision.storagePath).catch(() => {});
+        }
+        await deleteRecordingDoc(recording.id);
+        updateToast(toastId, { type: 'success', message: 'Grabación eliminada', persistent: false });
+      } catch (err) {
+        updateToast(toastId, { type: 'error', message: 'Error al eliminar', persistent: false });
       }
-      if (recording.revision.storagePath) {
-        await deleteFile(recording.revision.storagePath).catch(() => {});
-      }
-      // Eliminar documento de Firestore
-      await deleteRecordingDoc(recording.id);
-    } catch (err) {
-      setError('Error al eliminar la grabación');
-    }
+    });
   };
 
   const handleTranscribe = async (recording: RecordingDoc) => {
-    try {
-      setError(null);
-      const response = await fetch(`${CLOUD_RUN_URL}/transcribe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recordingId: recording.id,
-          storagePath: recording.storagePath,
-        }),
+    await withBusy(`transcribe-${recording.id}`, async () => {
+      // Estado local INMEDIATO — el usuario ve feedback al instante
+      setPendingTranscriptions(prev => new Set(prev).add(recording.id));
+      const toastId = addToast({
+        type: 'loading',
+        message: 'Conectando con el servicio de transcripción...',
+        detail: 'Esto puede tardar unos segundos la primera vez',
+        persistent: true,
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        setError(data.error || 'Error al iniciar transcripción');
+      try {
+        const response = await fetch(`${CLOUD_RUN_URL}/transcribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recordingId: recording.id,
+            storagePath: recording.storagePath,
+          }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Error del servidor');
+        }
+
+        updateToast(toastId, {
+          type: 'info',
+          message: 'Transcripción iniciada',
+          detail: 'El progreso aparecerá en el panel inferior',
+          persistent: false,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Error de conexión';
+        setPendingTranscriptions(prev => {
+          const s = new Set(prev);
+          s.delete(recording.id);
+          return s;
+        });
+        updateToast(toastId, {
+          type: 'error',
+          message: 'Error al iniciar transcripción',
+          detail: message,
+          persistent: false,
+        });
       }
-      // El progreso se actualiza via Firestore onSnapshot
-    } catch (err) {
-      setError('Error al conectar con el servicio de transcripción');
-    }
+    });
   };
 
   const handleReview = async (recording: RecordingDoc) => {
     if (!recording.transcription.text) return;
 
-    try {
-      setReviewingFiles(prev => new Set(Array.from(prev).concat(recording.id)));
-      setError(null);
-
-      const response = await fetch(`${CLOUD_RUN_URL}/review`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recordingId: recording.id,
-          text: recording.transcription.text,
-        }),
+    await withBusy(`review-${recording.id}`, async () => {
+      setPendingReviews(prev => new Set(prev).add(recording.id));
+      const toastId = addToast({
+        type: 'loading',
+        message: 'Enviando texto para revisión...',
+        persistent: true,
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        setError(data.error || 'Error al revisar el texto');
+      try {
+        const response = await fetch(`${CLOUD_RUN_URL}/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recordingId: recording.id,
+            text: recording.transcription.text,
+          }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Error del servidor');
+        }
+
+        updateToast(toastId, {
+          type: 'success',
+          message: 'Texto revisado exitosamente',
+          persistent: false,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Error de conexión';
+        setPendingReviews(prev => {
+          const s = new Set(prev);
+          s.delete(recording.id);
+          return s;
+        });
+        updateToast(toastId, {
+          type: 'error',
+          message: 'Error al revisar el texto',
+          detail: message,
+          persistent: false,
+        });
       }
-      // La actualización llega via Firestore onSnapshot
-    } catch (err) {
-      setError('Error al conectar con el servicio de revisión');
-    } finally {
-      setReviewingFiles(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(recording.id);
-        return newSet;
-      });
-    }
+    });
   };
 
   const playAudio = async (recording: RecordingDoc) => {
@@ -191,27 +329,29 @@ function App() {
         setPlayingURL(url);
         setPlayingAudio(recording.id);
       } catch (err) {
-        setError('Error al reproducir audio');
+        addToast({ type: 'error', message: 'Error al reproducir audio' });
       }
     }
   };
 
   const downloadAudio = async (recording: RecordingDoc) => {
-    try {
-      setDownloadingFile(recording.id);
-      const url = await getFileURL(recording.storagePath);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = recording.originalName || recording.fileName;
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      setError('Error al descargar audio');
-    } finally {
-      setDownloadingFile(null);
-    }
+    await withBusy(`download-${recording.id}`, async () => {
+      try {
+        setDownloadingFile(recording.id);
+        const url = await getFileURL(recording.storagePath);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = recording.originalName || recording.fileName;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (err) {
+        addToast({ type: 'error', message: 'Error al descargar audio' });
+      } finally {
+        setDownloadingFile(null);
+      }
+    });
   };
 
   const downloadTranscription = async (recording: RecordingDoc, revised = false) => {
@@ -233,7 +373,7 @@ function App() {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      setError('Error al descargar la transcripción');
+      addToast({ type: 'error', message: 'Error al descargar la transcripción' });
     } finally {
       setDownloadingFile(null);
     }
@@ -242,11 +382,8 @@ function App() {
   const toggleTranscription = (id: string) => {
     setExpandedTranscriptions(prev => {
       const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
+      if (newSet.has(id)) newSet.delete(id);
+      else newSet.add(id);
       return newSet;
     });
   };
@@ -254,17 +391,15 @@ function App() {
   const toggleRevisedText = (id: string) => {
     setShowRevisedText(prev => {
       const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
+      if (newSet.has(id)) newSet.delete(id);
+      else newSet.add(id);
       return newSet;
     });
   };
 
   const handleCopy = (text: string) => {
     setCopiedText(text);
+    addToast({ type: 'success', message: 'Texto copiado al portapapeles' });
     setTimeout(() => setCopiedText(null), 2000);
   };
 
@@ -282,7 +417,6 @@ function App() {
 
   const truncateFileName = (fileName: string, maxLength: number = 50) => {
     if (fileName.length <= maxLength) return fileName;
-
     const lastDotIndex = fileName.lastIndexOf('.');
     if (lastDotIndex > 0) {
       const name = fileName.substring(0, lastDotIndex);
@@ -292,13 +426,18 @@ function App() {
         return name.substring(0, maxNameLength) + '...' + ext;
       }
     }
-
     return fileName.substring(0, maxLength - 3) + '...';
   };
 
-  const isTranscribing = (rec: RecordingDoc) => rec.transcription.status === 'processing';
-  const hasTranscription = (rec: RecordingDoc) => rec.transcription.status === 'completed' && rec.transcription.text;
-  const hasRevision = (rec: RecordingDoc) => rec.revision.status === 'completed' && rec.revision.text;
+  // Estado visual: combina Firestore + estado local para feedback inmediato
+  const isTranscribing = (rec: RecordingDoc) =>
+    rec.transcription.status === 'processing' || pendingTranscriptions.has(rec.id);
+  const isReviewing = (rec: RecordingDoc) =>
+    rec.revision.status === 'processing' || pendingReviews.has(rec.id);
+  const hasTranscription = (rec: RecordingDoc) =>
+    rec.transcription.status === 'completed' && rec.transcription.text;
+  const hasRevision = (rec: RecordingDoc) =>
+    rec.revision.status === 'completed' && rec.revision.text;
 
   return (
     <div className="App">
@@ -343,15 +482,11 @@ function App() {
           )}
 
           {isUploading && (
-            <div style={{ marginTop: '10px', textAlign: 'center' }}>
-              <Loader size={20} className="spinning" style={{ marginRight: '8px', verticalAlign: 'middle' }} />
-              Guardando... {uploadProgress > 0 ? `${Math.round(uploadProgress)}%` : ''}
-            </div>
-          )}
-
-          {error && (
-            <div className="error-message">
-              Error: {error}
+            <div className="upload-progress-bar">
+              <div className="upload-progress-bar-fill" style={{ width: `${uploadProgress}%` }} />
+              <span className="upload-progress-text">
+                Subiendo... {uploadProgress > 0 ? `${Math.round(uploadProgress)}%` : ''}
+              </span>
             </div>
           )}
 
@@ -397,55 +532,28 @@ function App() {
 
         {/* Panel de Progreso de Transcripción (via Firestore real-time) */}
         {recordings.some(r => isTranscribing(r)) && (
-          <div style={{
-            position: 'fixed',
-            bottom: '20px',
-            right: '20px',
-            backgroundColor: 'rgba(30, 30, 30, 0.95)',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '12px',
-            padding: '16px',
-            maxWidth: '400px',
-            boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
-            zIndex: 1000
-          }}>
-            <div style={{
-              marginBottom: '12px',
-              fontSize: '14px',
-              fontWeight: 'bold',
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}>
-              Progreso de Transcripción
+          <div className="progress-panel">
+            <div className="progress-panel-header">
+              <Loader size={16} className="spinning" />
+              Procesando transcripción
             </div>
 
             {recordings.filter(r => isTranscribing(r)).map((rec) => (
-              <div key={rec.id} style={{
-                marginBottom: '8px',
-                padding: '8px',
-                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                borderRadius: '8px',
-              }}>
-                <div style={{ color: '#fff', fontSize: '13px', marginBottom: '4px' }}>
-                  {rec.transcription.progressMessage || 'Procesando...'}
+              <div key={rec.id} className="progress-panel-item">
+                <div className="progress-panel-filename">
+                  {truncateFileName(rec.originalName || rec.fileName, 35)}
+                </div>
+                <div className="progress-panel-message">
+                  {pendingTranscriptions.has(rec.id) && rec.transcription.status === 'pending'
+                    ? 'Conectando con el servicio...'
+                    : rec.transcription.progressMessage || 'Procesando...'}
                 </div>
                 {rec.transcription.progress > 0 && (
-                  <div style={{
-                    height: '4px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                    borderRadius: '2px',
-                    overflow: 'hidden'
-                  }}>
-                    <div style={{
-                      width: `${rec.transcription.progress}%`,
-                      height: '100%',
-                      backgroundColor: '#4CAF50',
-                      transition: 'width 0.5s ease',
-                      borderRadius: '2px'
-                    }} />
+                  <div className="progress-panel-bar">
+                    <div
+                      className="progress-panel-bar-fill"
+                      style={{ width: `${rec.transcription.progress}%` }}
+                    />
                   </div>
                 )}
               </div>
@@ -476,12 +584,17 @@ function App() {
                       {isTranscribing(recording) ? (
                         <div className="transcribing-indicator">
                           <Loader size={20} className="spinning" />
-                          <span>Transcribiendo...</span>
+                          <span>
+                            {pendingTranscriptions.has(recording.id) && recording.transcription.status === 'pending'
+                              ? 'Enviando...'
+                              : 'Transcribiendo...'}
+                          </span>
                         </div>
                       ) : recording.transcription.status === 'error' ? (
                         <button
                           className="action-button transcribe"
                           onClick={() => handleTranscribe(recording)}
+                          disabled={busyActions.has(`transcribe-${recording.id}`)}
                           title="Reintentar transcripción"
                         >
                           <FileText size={20} />
@@ -490,6 +603,7 @@ function App() {
                         <button
                           className="action-button transcribe"
                           onClick={() => handleTranscribe(recording)}
+                          disabled={busyActions.has(`transcribe-${recording.id}`)}
                           title="Transcribir"
                         >
                           <FileText size={20} />
@@ -516,7 +630,7 @@ function App() {
                         className="action-button download"
                         onClick={() => downloadAudio(recording)}
                         title="Descargar audio"
-                        disabled={downloadingFile === recording.id}
+                        disabled={busyActions.has(`download-${recording.id}`)}
                       >
                         <Download size={20} />
                       </button>
@@ -524,12 +638,28 @@ function App() {
                       <button
                         className="action-button delete"
                         onClick={() => handleDelete(recording)}
+                        disabled={busyActions.has(`delete-${recording.id}`)}
                         title="Eliminar"
                       >
                         <Trash2 size={20} />
                       </button>
                     </div>
                   </div>
+
+                  {/* Error de transcripción inline */}
+                  {recording.transcription.status === 'error' && (
+                    <div className="recording-error-banner">
+                      <AlertCircle size={14} />
+                      Error en transcripción: {recording.transcription.error}
+                      <button
+                        className="recording-error-retry"
+                        onClick={() => handleTranscribe(recording)}
+                        disabled={busyActions.has(`transcribe-${recording.id}`)}
+                      >
+                        Reintentar
+                      </button>
+                    </div>
+                  )}
 
                   {/* Sección de transcripción expandida */}
                   {hasTranscription(recording) && expandedTranscriptions.has(recording.id) && (
@@ -547,10 +677,11 @@ function App() {
                             </button>
                           </CopyToClipboard>
 
-                          {!hasRevision(recording) && !reviewingFiles.has(recording.id) && recording.revision.status !== 'processing' && (
+                          {!hasRevision(recording) && !isReviewing(recording) && (
                             <button
                               className="transcription-button"
                               onClick={() => handleReview(recording)}
+                              disabled={busyActions.has(`review-${recording.id}`)}
                               title="Revisar y editar texto con IA"
                               style={{ backgroundColor: '#4CAF50' }}
                             >
@@ -559,7 +690,7 @@ function App() {
                             </button>
                           )}
 
-                          {(reviewingFiles.has(recording.id) || recording.revision.status === 'processing') && (
+                          {isReviewing(recording) && (
                             <button
                               className="transcription-button"
                               disabled
@@ -659,12 +790,6 @@ function App() {
                           </div>
                         </>
                       )}
-
-                      {recording.transcription.status === 'error' && (
-                        <div style={{ color: '#f44336', marginTop: '10px', fontSize: '13px' }}>
-                          Error: {recording.transcription.error}
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -681,6 +806,27 @@ function App() {
           />
         )}
       </main>
+
+      {/* Sistema de Toasts */}
+      <div className="toast-container">
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast toast-${toast.type}`}>
+            <div className="toast-icon">
+              {toast.type === 'loading' && <Loader size={18} className="spinning" />}
+              {toast.type === 'success' && <CheckCircle size={18} />}
+              {toast.type === 'error' && <AlertCircle size={18} />}
+              {toast.type === 'info' && <Info size={18} />}
+            </div>
+            <div className="toast-content">
+              <div className="toast-message">{toast.message}</div>
+              {toast.detail && <div className="toast-detail">{toast.detail}</div>}
+            </div>
+            <button className="toast-close" onClick={() => removeToast(toast.id)}>
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

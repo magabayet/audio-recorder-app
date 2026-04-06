@@ -349,3 +349,243 @@
 .transcription-text::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.4);
 }
+
+/* ─── Upload progress bar ─── */
+
+.upload-progress-bar {
+  margin-top: 12px;
+  position: relative;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.upload-progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea, #4CAF50);
+  border-radius: 14px;
+  transition: width 0.3s ease;
+}
+
+.upload-progress-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+
+/* ─── Recording error banner ─── */
+
+.recording-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(244, 67, 54, 0.15);
+  border-top: 1px solid rgba(244, 67, 54, 0.3);
+  color: #ff8a80;
+  font-size: 0.85rem;
+}
+
+.recording-error-retry {
+  margin-left: auto;
+  padding: 4px 12px;
+  background: rgba(244, 67, 54, 0.3);
+  border: 1px solid rgba(244, 67, 54, 0.5);
+  border-radius: 12px;
+  color: white;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.recording-error-retry:hover:not(:disabled) {
+  background: rgba(244, 67, 54, 0.5);
+}
+
+.recording-error-retry:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Progress panel ─── */
+
+.progress-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(30, 30, 30, 0.95);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px;
+  max-width: 380px;
+  min-width: 300px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  z-index: 900;
+  animation: slideUp 0.3s ease-out;
+}
+
+.progress-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #fff;
+}
+
+.progress-panel-item {
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+
+.progress-panel-filename {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 4px;
+}
+
+.progress-panel-message {
+  font-size: 13px;
+  color: #fff;
+  font-weight: 500;
+}
+
+.progress-panel-bar {
+  margin-top: 8px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-panel-bar-fill {
+  height: 100%;
+  background: #4CAF50;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+/* ─── Toast notifications ─── */
+
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1100;
+  max-width: 420px;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  animation: slideIn 0.3s ease-out;
+  pointer-events: all;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.toast-loading {
+  background: rgba(40, 40, 50, 0.95);
+  border-left: 3px solid #667eea;
+}
+
+.toast-success {
+  background: rgba(30, 50, 30, 0.95);
+  border-left: 3px solid #4CAF50;
+}
+
+.toast-error {
+  background: rgba(50, 30, 30, 0.95);
+  border-left: 3px solid #f44336;
+}
+
+.toast-info {
+  background: rgba(30, 40, 55, 0.95);
+  border-left: 3px solid #2196F3;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.toast-loading .toast-icon { color: #667eea; }
+.toast-success .toast-icon { color: #4CAF50; }
+.toast-error .toast-icon { color: #f44336; }
+.toast-info .toast-icon { color: #2196F3; }
+
+.toast-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-message {
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.toast-detail {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.toast-close:hover {
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
