@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, Square, Download, Trash2, Play, Pause, Copy, FileText, Loader, Upload, X, AlertCircle, CheckCircle, Info, LogOut } from 'lucide-react';
+import { Mic, Square, Download, Trash2, Play, Pause, Copy, FileText, Loader, Upload, X, AlertCircle, CheckCircle, Info, LogOut, Settings } from 'lucide-react';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
 import AudioVisualizer from './components/AudioVisualizer';
 import LoginScreen from './components/LoginScreen';
@@ -495,6 +495,15 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
         <h1>Audio Recorder con Transcripción</h1>
         <div className="user-bar">
           <span className="user-email">{user.email}</span>
+          <a
+            href="https://console.firebase.google.com/project/audio-recorder-mg/authentication/users"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="admin-button"
+            title="Administrar usuarios"
+          >
+            <Settings size={16} />
+          </a>
           <button className="signout-button" onClick={onSignOut}>
             <LogOut size={16} />
             Cerrar Sesión
