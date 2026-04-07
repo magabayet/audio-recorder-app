@@ -112,6 +112,9 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
 
   const { toasts, addToast, removeToast, updateToast } = useToasts();
 
+  // Ref para timeouts de transcripciones pendientes
+  const transcriptionTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
   // Escuchar cambios en tiempo real de Firestore
   useEffect(() => {
     const unsubscribe = onRecordingsChange((recs) => {
@@ -122,6 +125,12 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
         recs.forEach(r => {
           if (r.transcription.status === 'processing' || r.transcription.status === 'completed' || r.transcription.status === 'error') {
             newSet.delete(r.id);
+            // Limpiar timeout de seguridad — Firestore ya confirmó
+            const timeout = transcriptionTimeoutsRef.current.get(r.id);
+            if (timeout) {
+              clearTimeout(timeout);
+              transcriptionTimeoutsRef.current.delete(r.id);
+            }
           }
         });
         return newSet;
@@ -305,6 +314,27 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
           detail: 'El progreso aparecerá en el panel inferior',
           persistent: false,
         });
+
+        // Timeout de seguridad: si Firestore no confirma en 2 min, limpiar estado local
+        const timeoutId = setTimeout(() => {
+          setPendingTranscriptions(prev => {
+            if (!prev.has(recording.id)) return prev;
+            const s = new Set(prev);
+            s.delete(recording.id);
+            return s;
+          });
+          // Solo mostrar error si Firestore sigue en 'pending' (no transitó a 'processing')
+          const currentRec = recordings.find(r => r.id === recording.id);
+          if (currentRec && currentRec.transcription.status === 'pending') {
+            addToast({
+              type: 'error',
+              message: 'La transcripción no respondió a tiempo',
+              detail: 'Intenta de nuevo. Si el problema persiste, recarga la página.',
+            });
+          }
+          transcriptionTimeoutsRef.current.delete(recording.id);
+        }, 120_000); // 2 minutos
+        transcriptionTimeoutsRef.current.set(recording.id, timeoutId);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Error de conexión';
         setPendingTranscriptions(prev => {

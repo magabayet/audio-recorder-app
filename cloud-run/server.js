@@ -152,7 +152,21 @@ app.post('/transcribe', async (req, res) => {
     return res.status(400).json({ error: 'recordingId y storagePath son requeridos' });
   }
 
-  // Responder inmediato, procesar en background
+  // CRÍTICO: Actualizar Firestore ANTES de responder al frontend.
+  // Si respondemos primero, Cloud Run puede matar el proceso background
+  // y el frontend se queda esperando infinitamente.
+  try {
+    await updateProgress(recordingId, {
+      status: 'processing',
+      progress: 0,
+      progressMessage: 'Iniciando transcripción...',
+    });
+  } catch (firestoreError) {
+    console.error('Error al actualizar Firestore antes de responder:', firestoreError);
+    return res.status(500).json({ error: 'No se pudo iniciar la transcripción' });
+  }
+
+  // Responder DESPUÉS de que Firestore confirme el status 'processing'
   res.json({ status: 'processing', recordingId });
 
   try {
@@ -187,11 +201,16 @@ app.post('/transcribe', async (req, res) => {
     console.log(`Transcripción completada para ${recordingId}`);
   } catch (error) {
     console.error('Error en transcripción:', error);
-    await updateProgress(recordingId, {
-      status: 'error',
-      error: error.message,
-      progressMessage: `Error: ${error.message}`,
-    }).catch(() => {});
+    try {
+      await updateProgress(recordingId, {
+        status: 'error',
+        error: error.message,
+        progressMessage: `Error: ${error.message}`,
+      });
+    } catch (firestoreError) {
+      console.error('CRÍTICO: No se pudo escribir el error en Firestore:', firestoreError);
+      console.error('El frontend quedará en estado "processing" sin actualización.');
+    }
   }
 });
 
