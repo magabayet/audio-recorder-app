@@ -112,9 +112,6 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
 
   const { toasts, addToast, removeToast, updateToast } = useToasts();
 
-  // Ref para timeouts de transcripciones pendientes
-  const transcriptionTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
-
   // Escuchar cambios en tiempo real de Firestore
   useEffect(() => {
     const unsubscribe = onRecordingsChange((recs) => {
@@ -125,12 +122,6 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
         recs.forEach(r => {
           if (r.transcription.status === 'processing' || r.transcription.status === 'completed' || r.transcription.status === 'error') {
             newSet.delete(r.id);
-            // Limpiar timeout de seguridad — Firestore ya confirmó
-            const timeout = transcriptionTimeoutsRef.current.get(r.id);
-            if (timeout) {
-              clearTimeout(timeout);
-              transcriptionTimeoutsRef.current.delete(r.id);
-            }
           }
         });
         return newSet;
@@ -294,6 +285,10 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
         persistent: true,
       });
 
+      // Timeout de 10 minutos para la solicitud HTTP (la transcripción es síncrona en Cloud Run)
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 600_000);
+
       try {
         const response = await authFetch(`${CLOUD_RUN_URL}/transcribe`, {
           method: 'POST',
@@ -301,7 +296,10 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
             recordingId: recording.id,
             storagePath: recording.storagePath,
           }),
+          signal: controller.signal,
         });
+
+        clearTimeout(fetchTimeout);
 
         if (!response.ok) {
           const data = await response.json();
@@ -309,34 +307,16 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
         }
 
         updateToast(toastId, {
-          type: 'info',
-          message: 'Transcripción iniciada',
-          detail: 'El progreso aparecerá en el panel inferior',
+          type: 'success',
+          message: 'Transcripción completada',
           persistent: false,
         });
-
-        // Timeout de seguridad: si Firestore no confirma en 2 min, limpiar estado local
-        const timeoutId = setTimeout(() => {
-          setPendingTranscriptions(prev => {
-            if (!prev.has(recording.id)) return prev;
-            const s = new Set(prev);
-            s.delete(recording.id);
-            return s;
-          });
-          // Solo mostrar error si Firestore sigue en 'pending' (no transitó a 'processing')
-          const currentRec = recordings.find(r => r.id === recording.id);
-          if (currentRec && currentRec.transcription.status === 'pending') {
-            addToast({
-              type: 'error',
-              message: 'La transcripción no respondió a tiempo',
-              detail: 'Intenta de nuevo. Si el problema persiste, recarga la página.',
-            });
-          }
-          transcriptionTimeoutsRef.current.delete(recording.id);
-        }, 120_000); // 2 minutos
-        transcriptionTimeoutsRef.current.set(recording.id, timeoutId);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Error de conexión';
+        clearTimeout(fetchTimeout);
+        const isTimeout = err instanceof DOMException && err.name === 'AbortError';
+        const message = isTimeout
+          ? 'La transcripción tardó demasiado. Revisa el progreso recargando la página.'
+          : err instanceof Error ? err.message : 'Error de conexión';
         setPendingTranscriptions(prev => {
           const s = new Set(prev);
           s.delete(recording.id);
@@ -344,7 +324,7 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
         });
         updateToast(toastId, {
           type: 'error',
-          message: 'Error al iniciar transcripción',
+          message: isTimeout ? 'Tiempo de espera agotado' : 'Error al iniciar transcripción',
           detail: message,
           persistent: false,
         });

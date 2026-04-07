@@ -152,9 +152,10 @@ app.post('/transcribe', async (req, res) => {
     return res.status(400).json({ error: 'recordingId y storagePath son requeridos' });
   }
 
-  // CRÍTICO: Actualizar Firestore ANTES de responder al frontend.
-  // Si respondemos primero, Cloud Run puede matar el proceso background
-  // y el frontend se queda esperando infinitamente.
+  // CRÍTICO: Cloud Run mata procesos en background después de enviar la respuesta HTTP.
+  // Por eso la transcripción DEBE ser síncrona — no respondemos hasta que termine.
+  // Firestore se actualiza durante el proceso para que el frontend vea progreso en tiempo real.
+
   try {
     await updateProgress(recordingId, {
       status: 'processing',
@@ -162,18 +163,15 @@ app.post('/transcribe', async (req, res) => {
       progressMessage: 'Iniciando transcripción...',
     });
   } catch (firestoreError) {
-    console.error('Error al actualizar Firestore antes de responder:', firestoreError);
+    console.error('Error al actualizar Firestore:', firestoreError);
     return res.status(500).json({ error: 'No se pudo iniciar la transcripción' });
   }
-
-  // Responder DESPUÉS de que Firestore confirme el status 'processing'
-  res.json({ status: 'processing', recordingId });
 
   try {
     // Descargar de GCS a /tmp
     const localPath = await downloadFromGCS(storagePath);
 
-    // Transcribir
+    // Transcribir (actualiza progreso en Firestore durante el proceso)
     const text = await transcribeAudio(localPath, recordingId);
 
     // Guardar transcripción en /tmp y subir a GCS
@@ -191,7 +189,7 @@ app.post('/transcribe', async (req, res) => {
       storagePath: txtStoragePath,
       progress: 100,
       progressMessage: 'Transcripción completada',
-      completedAt: Firestore.Timestamp ? Firestore.Timestamp.now() : new Date(),
+      completedAt: new Date(),
     });
 
     // Limpiar archivos temporales
@@ -199,6 +197,9 @@ app.post('/transcribe', async (req, res) => {
     await fs.unlink(localTxtPath).catch(() => {});
 
     console.log(`Transcripción completada para ${recordingId}`);
+
+    // Responder SOLO cuando todo terminó — Cloud Run mantiene el CPU activo
+    res.json({ status: 'completed', recordingId });
   } catch (error) {
     console.error('Error en transcripción:', error);
     try {
@@ -209,8 +210,8 @@ app.post('/transcribe', async (req, res) => {
       });
     } catch (firestoreError) {
       console.error('CRÍTICO: No se pudo escribir el error en Firestore:', firestoreError);
-      console.error('El frontend quedará en estado "processing" sin actualización.');
     }
+    res.status(500).json({ error: error.message });
   }
 });
 
