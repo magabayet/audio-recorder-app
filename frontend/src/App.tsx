@@ -104,6 +104,7 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showRevisedText, setShowRevisedText] = useState<Set<string>>(new Set());
+  const [reviewService, setReviewService] = useState<'openai' | 'venice'>('openai');
 
   // Estados locales inmediatos (no dependen de Firestore)
   const [pendingTranscriptions, setPendingTranscriptions] = useState<Set<string>>(new Set());
@@ -349,6 +350,7 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
           body: JSON.stringify({
             recordingId: recording.id,
             text: recording.transcription.text,
+            service: reviewService,
           }),
         });
 
@@ -754,16 +756,27 @@ function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) 
                           </CopyToClipboard>
 
                           {!hasRevision(recording) && !isReviewing(recording) && (
-                            <button
-                              className="transcription-button"
-                              onClick={() => handleReview(recording)}
-                              disabled={busyActions.has(`review-${recording.id}`)}
-                              title="Revisar y editar texto con IA"
-                              style={{ backgroundColor: '#4CAF50' }}
-                            >
-                              <FileText size={16} />
-                              Revisar y Editar Texto
-                            </button>
+                            <>
+                              <select
+                                value={reviewService}
+                                onChange={(e) => setReviewService(e.target.value as 'openai' | 'venice')}
+                                className="service-selector"
+                                title="Servicio de IA para revisión"
+                              >
+                                <option value="openai">OpenAI</option>
+                                <option value="venice">Venice AI</option>
+                              </select>
+                              <button
+                                className="transcription-button"
+                                onClick={() => handleReview(recording)}
+                                disabled={busyActions.has(`review-${recording.id}`)}
+                                title={`Revisar con ${reviewService === 'venice' ? 'Venice AI' : 'OpenAI GPT-4o-mini'}`}
+                                style={{ backgroundColor: reviewService === 'venice' ? '#7C3AED' : '#4CAF50' }}
+                              >
+                                <FileText size={16} />
+                                Revisar con {reviewService === 'venice' ? 'Venice' : 'OpenAI'}
+                              </button>
+                            </>
                           )}
 
                           {isReviewing(recording) && (

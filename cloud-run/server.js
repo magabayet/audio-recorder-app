@@ -16,6 +16,10 @@ app.use(express.json());
 const gcs = new Storage();
 const firestore = new Firestore();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const venice = new OpenAI({
+  apiKey: process.env.VENICE_API_KEY,
+  baseURL: 'https://api.venice.ai/api/v1',
+});
 
 const BUCKET_NAME = process.env.GCS_BUCKET_NAME;
 const RECORDINGS_COLLECTION = 'recordings';
@@ -217,27 +221,36 @@ app.post('/transcribe', async (req, res) => {
 
 /**
  * POST /review
- * Body: { recordingId, text }
- * Revisa el texto con GPT-4o-mini, sube la versión revisada a GCS y actualiza Firestore.
+ * Body: { recordingId, text, service? }
+ * Revisa el texto con OpenAI o Venice AI, sube la versión revisada a GCS y actualiza Firestore.
+ * service: 'openai' (default) | 'venice'
  */
 app.post('/review', async (req, res) => {
-  const { recordingId, text } = req.body;
+  const { recordingId, text, service = 'openai' } = req.body;
 
   if (!recordingId || !text) {
     return res.status(400).json({ error: 'recordingId y text son requeridos' });
   }
 
+  // Seleccionar cliente y modelo según el servicio
+  const isVenice = service === 'venice';
+  const client = isVenice ? venice : openai;
+  const model = isVenice ? 'venice-uncensored' : 'gpt-4o-mini';
+
+  console.log(`Revisión con ${service} (modelo: ${model}) para ${recordingId}`);
+
   try {
     // Actualizar estado
     const revisionUpdates = {};
     revisionUpdates['revision.status'] = 'processing';
+    revisionUpdates['revision.service'] = service;
     await firestore
       .collection(RECORDINGS_COLLECTION)
       .doc(recordingId)
       .update(revisionUpdates);
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    const completion = await client.chat.completions.create({
+      model,
       messages: [
         {
           role: 'system',
@@ -254,7 +267,7 @@ app.post('/review', async (req, res) => {
         { role: 'user', content: text },
       ],
       temperature: 0.3,
-      max_tokens: 4096,
+      max_completion_tokens: 4096,
     });
 
     const revisedText = completion.choices[0].message.content;
