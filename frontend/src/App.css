@@ -505,22 +505,6 @@
   cursor: not-allowed;
 }
 
-.service-selector {
-  padding: 0.4rem 0.8rem;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 20px;
-  color: white;
-  font-size: 0.85rem;
-  cursor: pointer;
-  appearance: auto;
-}
-
-.service-selector option {
-  background: #333;
-  color: white;
-}
-
 .transcription-text {
   padding: 1rem;
   background: rgba(255, 255, 255, 0.05);
