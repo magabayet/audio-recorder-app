@@ -1,3 +1,15 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 .App {
   min-height: 100vh;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -139,6 +151,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 10px;
 }
@@ -230,6 +243,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 2rem;
   margin-bottom: 1rem;
 }
@@ -369,6 +383,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
   padding: 1rem 1.5rem;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 15px;
@@ -379,11 +395,13 @@
   flex-direction: column;
   gap: 0.25rem;
   flex: 1;
+  min-width: 0;
 }
 
 .recording-name {
   font-weight: 600;
   font-size: 1.1rem;
+  overflow-wrap: anywhere;
 }
 
 .recording-meta {
@@ -394,6 +412,7 @@
 .recording-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
@@ -467,6 +486,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
@@ -478,6 +499,7 @@
 
 .transcription-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
@@ -771,5 +793,112 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* ─── Responsive: tablets y pantallas medianas ─── */
+
+@media (max-width: 768px) {
+  .App-header {
+    padding: 1.25rem 1rem;
+  }
+
+  .App-header h1 {
+    font-size: 1.6rem;
+  }
+
+  .App-main {
+    padding: 1rem;
+  }
+
+  .recording-section,
+  .recordings-section {
+    padding: 1.25rem;
+    border-radius: 16px;
+  }
+
+  .recording-section {
+    margin-bottom: 1.25rem;
+  }
+
+  .recording-controls {
+    gap: 1rem;
+  }
+
+  .record-button,
+  .stop-button {
+    width: 100%;
+    justify-content: center;
+    padding: 0.9rem 1.5rem;
+    font-size: 1.05rem;
+  }
+
+  .recording-indicator {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .recordings-section h2 {
+    font-size: 1.5rem;
+  }
+
+  .transcription-section {
+    padding: 1rem;
+  }
+
+  /* Paneles flotantes ocupan el ancho disponible sin desbordar */
+  .progress-panel {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .toast-container {
+    left: 12px;
+    right: 12px;
+    top: 12px;
+    max-width: none;
+  }
+}
+
+/* ─── Responsive: teléfonos ─── */
+
+@media (max-width: 480px) {
+  .App-header h1 {
+    font-size: 1.35rem;
+  }
+
+  .recordings-section h2 {
+    font-size: 1.35rem;
+  }
+
+  /* Cada grabación: info arriba, acciones debajo a todo lo ancho */
+  .recording-item {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 1rem;
+  }
+
+  .recording-actions {
+    justify-content: flex-start;
+  }
+
+  .recording-name {
+    font-size: 1rem;
+  }
+
+  .transcription-button {
+    font-size: 0.8rem;
+    padding: 0.45rem 0.75rem;
+  }
+
+  .login-card {
+    padding: 28px 22px;
+  }
+
+  .login-header h1 {
+    font-size: 1.5rem;
   }
 }
