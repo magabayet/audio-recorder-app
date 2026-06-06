@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "audio-recorder-mg",
     "public": "frontend/build",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
