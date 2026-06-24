@@ -1,251 +1,223 @@
-import React, { useState, useEffect, useRef } from 'react';
-import io, { Socket } from 'socket.io-client';
-import { Mic, Square, Download, Trash2, Play, Pause, Copy, FileText, Loader, Upload, Video, Users } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Mic, Square, Download, Trash2, Play, Pause, Copy, FileText, Loader, Upload, X, AlertCircle, CheckCircle, Info, LogOut, Settings } from 'lucide-react';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
 import AudioVisualizer from './components/AudioVisualizer';
+import LoginScreen from './components/LoginScreen';
+import { useMediaRecorder } from './hooks/useMediaRecorder';
+import { onRecordingsChange, createRecording, deleteRecording as deleteRecordingDoc, type RecordingDoc } from './lib/firestore';
+import { uploadAudio, getFileURL, deleteFile } from './lib/storage';
+import { onAuthChange, signOut, getIdToken } from './lib/auth';
+import type { User } from 'firebase/auth';
 import './App.css';
 
-interface Recording {
-  name: string;
-  size: number;
-  createdAt: string;
-  path: string;
-  transcription?: string | null;
-  transcriptionPath?: string | null;
-  revisedText?: string | null;
-  revisedTextPath?: string | null;
-  revisedAt?: string | null;
+const CLOUD_RUN_URL = process.env.REACT_APP_CLOUD_RUN_URL || 'http://localhost:8080';
+
+// ─── Sistema de Toasts ───────────────────────────────────────────
+
+interface Toast {
+  id: string;
+  type: 'info' | 'success' | 'error' | 'loading';
+  message: string;
+  detail?: string;
+  persistent?: boolean;
 }
 
+function useToasts() {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const counterRef = useRef(0);
+
+  const addToast = useCallback((toast: Omit<Toast, 'id'>): string => {
+    const id = `toast-${++counterRef.current}`;
+    setToasts(prev => [...prev, { ...toast, id }]);
+    if (!toast.persistent) {
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, toast.type === 'error' ? 6000 : 4000);
+    }
+    return id;
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const updateToast = useCallback((id: string, updates: Partial<Omit<Toast, 'id'>>) => {
+    setToasts(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+    // Si se actualiza a un tipo no-persistente, auto-remover
+    if (updates.persistent === false || (updates.type && updates.type !== 'loading')) {
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, updates.type === 'error' ? 6000 : 4000);
+    }
+  }, []);
+
+  return { toasts, addToast, removeToast, updateToast };
+}
+
+// ─── App ─────────────────────────────────────────────────────────
+
 function App() {
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(null);
-  const [recordings, setRecordings] = useState<Recording[]>([]);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Escuchar estado de autenticación
+  useEffect(() => {
+    const unsubscribe = onAuthChange((u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
+  // Pantalla de carga mientras se verifica auth
+  if (authLoading) {
+    return (
+      <div className="App" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Loader size={32} className="spinning" />
+      </div>
+    );
+  }
+
+  // Si no hay usuario, mostrar login
+  if (!user) {
+    return <LoginScreen onLogin={() => {}} />;
+  }
+
+  return <AppContent user={user} onSignOut={handleSignOut} />;
+}
+
+// ─── Contenido principal (solo visible si está autenticado) ──────
+
+function AppContent({ user, onSignOut }: { user: User; onSignOut: () => void }) {
+  const recorder = useMediaRecorder();
+  const [recordings, setRecordings] = useState<RecordingDoc[]>([]);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
-  const [transcribingFiles, setTranscribingFiles] = useState<Set<string>>(new Set());
+  const [playingURL, setPlayingURL] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [expandedTranscriptions, setExpandedTranscriptions] = useState<Set<string>>(new Set());
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [recordingSource, setRecordingSource] = useState<'mic' | 'zoom' | 'teams'>('mic');
+  const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [progressMessages, setProgressMessages] = useState<Array<{
-    id: string;
-    message: string;
-    details: string;
-    emoji: string;
-    timestamp: Date;
-    progress?: number;
-  }>>([]);
-  const [reviewingFiles, setReviewingFiles] = useState<Set<string>>(new Set());
-  const [revisedTexts, setRevisedTexts] = useState<Map<string, string>>(new Map());
   const [showRevisedText, setShowRevisedText] = useState<Set<string>>(new Set());
 
+  // Estados locales inmediatos (no dependen de Firestore)
+  const [pendingTranscriptions, setPendingTranscriptions] = useState<Set<string>>(new Set());
+  const [pendingReviews, setPendingReviews] = useState<Set<string>>(new Set());
+  const [busyActions, setBusyActions] = useState<Set<string>>(new Set());
+
+  const { toasts, addToast, removeToast, updateToast } = useToasts();
+
+  // Escuchar cambios en tiempo real de Firestore
   useEffect(() => {
-    // Obtener el puerto del backend desde variable de entorno o usar el default
-    const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
-    const backendUrl = `http://localhost:${backendPort}`;
-    console.log('Connecting to backend at:', backendUrl);
-    
-    const newSocket = io(backendUrl);
-    setSocket(newSocket);
-
-    newSocket.on('connect', () => {
-      console.log('Connected to server');
-      newSocket.emit('get-recordings');
-    });
-
-    newSocket.on('recording-started', (data) => {
-      setCurrentRecordingId(data.id);
-      setIsRecording(true);
-      setError(null);
-    });
-
-    newSocket.on('recording-stopped', (data) => {
-      setIsRecording(false);
-      setRecordingDuration(0);
-      newSocket.emit('get-recordings');
-    });
-
-    newSocket.on('recording-saved', (data) => {
-      console.log('Recording saved:', data);
-      newSocket.emit('get-recordings');
-    });
-
-    newSocket.on('transcription-started', (data) => {
-      setTranscribingFiles(prev => new Set(Array.from(prev).concat(data.fileName)));
-    });
-
-    newSocket.on('transcription-completed', (data) => {
-      setTranscribingFiles(prev => {
+    const unsubscribe = onRecordingsChange((recs) => {
+      setRecordings(recs);
+      // Limpiar pending states cuando Firestore confirma el status
+      setPendingTranscriptions(prev => {
         const newSet = new Set(prev);
-        newSet.delete(data.fileName);
-        return newSet;
-      });
-      // Limpiar mensajes de progreso después de 3 segundos
-      setTimeout(() => {
-        setProgressMessages([]);
-      }, 3000);
-      newSocket.emit('get-recordings');
-    });
-
-    newSocket.on('transcription-error', (data) => {
-      setTranscribingFiles(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(data.fileName);
-        return newSet;
-      });
-      // Limpiar mensajes de progreso en caso de error
-      setTimeout(() => {
-        setProgressMessages([]);
-      }, 3000);
-      setError(`Transcription error: ${data.error}`);
-    });
-
-    newSocket.on('recordings-list', (data) => {
-      if (data.recordings) {
-        setRecordings(data.recordings);
-        
-        // Cargar los textos revisados en el estado local
-        const newRevisedTexts = new Map<string, string>();
-        data.recordings.forEach((recording: Recording) => {
-          if (recording.revisedText) {
-            newRevisedTexts.set(recording.name, recording.revisedText);
+        recs.forEach(r => {
+          if (r.transcription.status === 'processing' || r.transcription.status === 'completed' || r.transcription.status === 'error') {
+            newSet.delete(r.id);
           }
         });
-        
-        if (newRevisedTexts.size > 0) {
-          setRevisedTexts(newRevisedTexts);
-        }
-      }
+        return newSet;
+      });
+      setPendingReviews(prev => {
+        const newSet = new Set(prev);
+        recs.forEach(r => {
+          if (r.revision.status === 'completed' || r.revision.status === 'error') {
+            newSet.delete(r.id);
+          }
+        });
+        return newSet;
+      });
     });
-
-    newSocket.on('recording-deleted', () => {
-      newSocket.emit('get-recordings');
-    });
-
-    newSocket.on('recording-error', (data) => {
-      setError(data.error);
-      setIsRecording(false);
-    });
-
-    newSocket.on('file-uploaded', () => {
-      newSocket.emit('get-recordings');
-    });
-
-    newSocket.on('progress-update', (data) => {
-      setProgressMessages(prev => [...prev, {
-        id: `${data.fileName}-${data.stage}-${Date.now()}-${Math.random()}`,
-        message: data.message,
-        details: data.details,
-        emoji: data.emoji,
-        timestamp: new Date(),
-        progress: data.progress
-      }]);
-
-      // Limpiar mensajes antiguos después de 30 segundos
-      setTimeout(() => {
-        setProgressMessages(prev => prev.filter(msg => 
-          new Date().getTime() - msg.timestamp.getTime() < 30000
-        ));
-      }, 30000);
-    });
-
-    return () => {
-      newSocket.close();
-    };
+    return () => unsubscribe();
   }, []);
 
+  // Mostrar errores del hook de grabación
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isRecording) {
-      const startTime = Date.now();
-      interval = setInterval(() => {
-        setRecordingDuration(Math.floor((Date.now() - startTime) / 1000));
-      }, 1000);
+    if (recorder.error) {
+      addToast({ type: 'error', message: recorder.error });
     }
-    return () => clearInterval(interval);
-  }, [isRecording]);
+  }, [recorder.error, addToast]);
 
-  const startRecording = () => {
-    if (socket) {
-      socket.emit('start-recording', { source: recordingSource });
-    }
-  };
-
-  const stopRecording = () => {
-    if (socket && currentRecordingId) {
-      socket.emit('stop-recording', { id: currentRecordingId });
-    }
-  };
-
-  const deleteRecording = (fileName: string) => {
-    if (socket) {
-      socket.emit('delete-recording', { fileName });
-    }
-  };
-
-  const transcribeRecording = (fileName: string) => {
-    if (socket) {
-      socket.emit('transcribe-recording', { fileName });
-    }
-  };
-
-  const toggleTranscription = (fileName: string) => {
-    setExpandedTranscriptions(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(fileName)) {
-        newSet.delete(fileName);
-      } else {
-        newSet.add(fileName);
-      }
-      return newSet;
+  // Fetch autenticado para Cloud Run
+  const authFetch = async (url: string, options: RequestInit = {}) => {
+    const token = await getIdToken();
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
     });
   };
 
-  const downloadRevisedText = async (fileName: string) => {
+  // Helper para marcar acciones en progreso y evitar doble clic
+  const withBusy = async (key: string, fn: () => Promise<void>) => {
+    if (busyActions.has(key)) return;
+    setBusyActions(prev => new Set(prev).add(key));
     try {
-      setDownloadingFile(fileName);
-      const revisedFileName = fileName.replace('.wav', '_revised.txt')
-        .replace('.mp3', '_revised.txt').replace('.mp4', '_revised.txt')
-        .replace('.m4a', '_revised.txt').replace('.ogg', '_revised.txt')
-        .replace('.webm', '_revised.txt').replace('.flac', '_revised.txt')
-        .replace('.txt', '_revised.txt').replace('_revised_revised', '_revised');
-      
-      // Descargar la versión revisada
-      const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
-      const response = await fetch(`http://localhost:${backendPort}/download-transcription/${fileName}?revised=true`);
-      
-      if (!response.ok) {
-        const error = await response.json();
-        console.error('Download error:', error);
-        setError(`Error descargando texto revisado: ${error.error || 'Archivo no encontrado'}`);
-        setTimeout(() => setError(null), 3000);
-        setDownloadingFile(null);
-        return;
-      }
-      
-      // Convertir la respuesta a blob y descargar
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = revisedFileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      
-      console.log('Revised text downloaded successfully');
-      setDownloadingFile(null);
-    } catch (error) {
-      console.error('Error downloading revised text:', error);
-      setError('Error al descargar el texto revisado');
-      setTimeout(() => setError(null), 3000);
-      setDownloadingFile(null);
+      await fn();
+    } finally {
+      setBusyActions(prev => {
+        const s = new Set(prev);
+        s.delete(key);
+        return s;
+      });
+    }
+  };
+
+  const handleStartRecording = async () => {
+    addToast({ type: 'info', message: 'Iniciando grabación...', detail: 'Permite el acceso al micrófono si el navegador lo solicita' });
+    await recorder.startRecording();
+  };
+
+  const handleStopRecording = async () => {
+    const toastId = addToast({ type: 'loading', message: 'Guardando grabación...', persistent: true });
+
+    const blob = await recorder.stopRecording();
+    if (!blob) {
+      updateToast(toastId, { type: 'error', message: 'No se pudo obtener la grabación', persistent: false });
+      return;
+    }
+
+    setIsUploading(true);
+
+    try {
+      const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
+      const fileName = `mic_recording_${Date.now()}.${extension}`;
+
+      updateToast(toastId, { message: 'Subiendo audio a la nube...', detail: '0%' });
+
+      const { storagePath } = await uploadAudio(blob, fileName, (progress) => {
+        setUploadProgress(progress);
+        updateToast(toastId, { detail: `${Math.round(progress)}%` });
+      });
+
+      updateToast(toastId, { message: 'Registrando grabación...', detail: undefined });
+
+      await createRecording({
+        fileName,
+        originalName: fileName,
+        size: blob.size,
+        mimeType: blob.type,
+        storagePath,
+      });
+
+      updateToast(toastId, { type: 'success', message: 'Grabación guardada', persistent: false });
+      setUploadProgress(0);
+    } catch (err) {
+      console.error('Error guardando grabación:', err);
+      updateToast(toastId, { type: 'error', message: 'Error al guardar la grabación', persistent: false });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -254,29 +226,27 @@ function App() {
     if (!file) return;
 
     setIsUploading(true);
-    setError(null);
-
-    const formData = new FormData();
-    formData.append('audio', file);
+    const toastId = addToast({ type: 'loading', message: `Subiendo ${file.name}...`, persistent: true });
 
     try {
-      const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
-      const response = await fetch(`http://localhost:${backendPort}/upload`, {
-        method: 'POST',
-        body: formData
+      const { storagePath } = await uploadAudio(file, file.name, (progress) => {
+        setUploadProgress(progress);
+        updateToast(toastId, { detail: `${Math.round(progress)}%` });
       });
 
-      const result = await response.json();
-      
-      if (response.ok) {
-        console.log('Archivo subido:', result);
-        // El socket listener actualizará la lista
-      } else {
-        setError(result.error || 'Error al subir el archivo');
-      }
-    } catch (error) {
-      setError('Error al conectar con el servidor');
-      console.error('Upload error:', error);
+      await createRecording({
+        fileName: `uploaded_${Date.now()}_${file.name}`,
+        originalName: file.name,
+        size: file.size,
+        mimeType: file.type,
+        storagePath,
+      });
+
+      updateToast(toastId, { type: 'success', message: `${file.name} subido correctamente`, persistent: false });
+      setUploadProgress(0);
+    } catch (err) {
+      console.error('Upload error:', err);
+      updateToast(toastId, { type: 'error', message: 'Error al subir el archivo', persistent: false });
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -285,123 +255,212 @@ function App() {
     }
   };
 
-  const handleCopy = (text: string) => {
-    setCopiedText(text);
-    setTimeout(() => setCopiedText(null), 2000);
-  };
-
-  const reviewText = async (fileName: string, transcription: string) => {
-    try {
-      setReviewingFiles(prev => new Set(Array.from(prev).concat(fileName)));
-      setError(null);
-      
-      const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
-      const response = await fetch(`http://localhost:${backendPort}/api/review-text`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text: transcription,
-          fileName: fileName
-        })
-      });
-
-      const result = await response.json();
-      
-      if (response.ok && result.revisedText) {
-        setRevisedTexts(prev => new Map(prev).set(fileName, result.revisedText));
-        setShowRevisedText(prev => new Set(Array.from(prev).concat(fileName)));
-        
-        // Actualizar la lista de recordings con el texto revisado
-        setRecordings(prevRecordings => 
-          prevRecordings.map(rec => 
-            rec.name === fileName 
-              ? { 
-                  ...rec, 
-                  revisedText: result.revisedText,
-                  revisedTextPath: result.revisedPath,
-                  revisedAt: new Date().toISOString()
-                }
-              : rec
-          )
-        );
-        
-        console.log('Texto revisado exitosamente');
-        
-        // Refrescar la lista de recordings desde el servidor
-        if (socket) {
-          socket.emit('get-recordings');
+  const handleDelete = async (recording: RecordingDoc) => {
+    await withBusy(`delete-${recording.id}`, async () => {
+      const toastId = addToast({ type: 'loading', message: 'Eliminando grabación...', persistent: true });
+      try {
+        await deleteFile(recording.storagePath).catch(() => {});
+        if (recording.transcription.storagePath) {
+          await deleteFile(recording.transcription.storagePath).catch(() => {});
         }
-      } else {
-        setError(result.error || 'Error al revisar el texto');
-        setTimeout(() => setError(null), 5000);
+        if (recording.revision.storagePath) {
+          await deleteFile(recording.revision.storagePath).catch(() => {});
+        }
+        await deleteRecordingDoc(recording.id);
+        updateToast(toastId, { type: 'success', message: 'Grabación eliminada', persistent: false });
+      } catch (err) {
+        updateToast(toastId, { type: 'error', message: 'Error al eliminar', persistent: false });
       }
-    } catch (error) {
-      console.error('Error al revisar texto:', error);
-      setError('Error al conectar con el servidor para revisar el texto');
-      setTimeout(() => setError(null), 5000);
-    } finally {
-      setReviewingFiles(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(fileName);
-        return newSet;
-      });
-    }
-  };
-
-  const toggleRevisedText = (fileName: string) => {
-    setShowRevisedText(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(fileName)) {
-        newSet.delete(fileName);
-      } else {
-        newSet.add(fileName);
-      }
-      return newSet;
     });
   };
 
-  const downloadTranscription = async (fileName: string) => {
-    try {
-      setDownloadingFile(fileName);
-      const transcriptionFileName = fileName.replace('.wav', '.txt')
-        .replace('.mp3', '.txt').replace('.mp4', '.txt')
-        .replace('.m4a', '.txt').replace('.ogg', '.txt')
-        .replace('.webm', '.txt').replace('.flac', '.txt');
-      
-      // Verificar si el archivo existe antes de intentar descargarlo
-      const backendPort = process.env.REACT_APP_BACKEND_PORT || '5001';
-      const response = await fetch(`http://localhost:${backendPort}/download-transcription/${fileName}`);
-      
-      if (!response.ok) {
-        const error = await response.json();
-        console.error('Download error:', error);
-        setError(`Error descargando transcripción: ${error.error || 'Archivo no encontrado'}`);
-        setTimeout(() => setError(null), 3000);
-        setDownloadingFile(null);
-        return;
+  const handleTranscribe = async (recording: RecordingDoc) => {
+    await withBusy(`transcribe-${recording.id}`, async () => {
+      // Estado local INMEDIATO — el usuario ve feedback al instante
+      setPendingTranscriptions(prev => new Set(prev).add(recording.id));
+      const toastId = addToast({
+        type: 'loading',
+        message: 'Conectando con el servicio de transcripción...',
+        detail: 'Esto puede tardar unos segundos la primera vez',
+        persistent: true,
+      });
+
+      // Timeout de 10 minutos para la solicitud HTTP (la transcripción es síncrona en Cloud Run)
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 600_000);
+
+      try {
+        const response = await authFetch(`${CLOUD_RUN_URL}/transcribe`, {
+          method: 'POST',
+          body: JSON.stringify({
+            recordingId: recording.id,
+            storagePath: recording.storagePath,
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(fetchTimeout);
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Error del servidor');
+        }
+
+        updateToast(toastId, {
+          type: 'success',
+          message: 'Transcripción completada',
+          persistent: false,
+        });
+      } catch (err) {
+        clearTimeout(fetchTimeout);
+        const isTimeout = err instanceof DOMException && err.name === 'AbortError';
+        const message = isTimeout
+          ? 'La transcripción tardó demasiado. Revisa el progreso recargando la página.'
+          : err instanceof Error ? err.message : 'Error de conexión';
+        setPendingTranscriptions(prev => {
+          const s = new Set(prev);
+          s.delete(recording.id);
+          return s;
+        });
+        updateToast(toastId, {
+          type: 'error',
+          message: isTimeout ? 'Tiempo de espera agotado' : 'Error al iniciar transcripción',
+          detail: message,
+          persistent: false,
+        });
       }
-      
-      // Convertir la respuesta a blob y descargar
-      const blob = await response.blob();
+    });
+  };
+
+  const handleReview = async (recording: RecordingDoc) => {
+    if (!recording.transcription.text) return;
+
+    await withBusy(`review-${recording.id}`, async () => {
+      setPendingReviews(prev => new Set(prev).add(recording.id));
+      const toastId = addToast({
+        type: 'loading',
+        message: 'Enviando texto para revisión...',
+        persistent: true,
+      });
+
+      try {
+        const response = await authFetch(`${CLOUD_RUN_URL}/review`, {
+          method: 'POST',
+          body: JSON.stringify({
+            recordingId: recording.id,
+            text: recording.transcription.text,
+          }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Error del servidor');
+        }
+
+        updateToast(toastId, {
+          type: 'success',
+          message: 'Texto revisado exitosamente',
+          persistent: false,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Error de conexión';
+        setPendingReviews(prev => {
+          const s = new Set(prev);
+          s.delete(recording.id);
+          return s;
+        });
+        updateToast(toastId, {
+          type: 'error',
+          message: 'Error al revisar el texto',
+          detail: message,
+          persistent: false,
+        });
+      }
+    });
+  };
+
+  const playAudio = async (recording: RecordingDoc) => {
+    if (playingAudio === recording.id) {
+      setPlayingAudio(null);
+      setPlayingURL(null);
+    } else {
+      try {
+        const url = await getFileURL(recording.storagePath);
+        setPlayingURL(url);
+        setPlayingAudio(recording.id);
+      } catch (err) {
+        addToast({ type: 'error', message: 'Error al reproducir audio' });
+      }
+    }
+  };
+
+  const downloadAudio = async (recording: RecordingDoc) => {
+    await withBusy(`download-${recording.id}`, async () => {
+      try {
+        setDownloadingFile(recording.id);
+        const url = await getFileURL(recording.storagePath);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = recording.originalName || recording.fileName;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (err) {
+        addToast({ type: 'error', message: 'Error al descargar audio' });
+      } finally {
+        setDownloadingFile(null);
+      }
+    });
+  };
+
+  const downloadTranscription = async (recording: RecordingDoc, revised = false) => {
+    try {
+      setDownloadingFile(recording.id);
+      const text = revised ? recording.revision.text : recording.transcription.text;
+      if (!text) return;
+
+      const blob = new Blob([text], { type: 'text/plain' });
       const url = window.URL.createObjectURL(blob);
+      const suffix = revised ? '_revisado' : '';
+      const fileName = recording.fileName.replace(/\.[^.]+$/, `${suffix}.txt`);
+
       const link = document.createElement('a');
       link.href = url;
-      link.download = transcriptionFileName;
+      link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      
-      console.log('Transcription downloaded successfully');
-      setDownloadingFile(null);
-    } catch (error) {
-      console.error('Error downloading transcription:', error);
-      setError('Error al descargar la transcripción');
-      setTimeout(() => setError(null), 3000);
+    } catch (err) {
+      addToast({ type: 'error', message: 'Error al descargar la transcripción' });
+    } finally {
       setDownloadingFile(null);
     }
+  };
+
+  const toggleTranscription = (id: string) => {
+    setExpandedTranscriptions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) newSet.delete(id);
+      else newSet.add(id);
+      return newSet;
+    });
+  };
+
+  const toggleRevisedText = (id: string) => {
+    setShowRevisedText(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) newSet.delete(id);
+      else newSet.add(id);
+      return newSet;
+    });
+  };
+
+  const handleCopy = (text: string) => {
+    setCopiedText(text);
+    addToast({ type: 'success', message: 'Texto copiado al portapapeles' });
+    setTimeout(() => setCopiedText(null), 2000);
   };
 
   const formatDuration = (seconds: number) => {
@@ -418,20 +477,6 @@ function App() {
 
   const truncateFileName = (fileName: string, maxLength: number = 50) => {
     if (fileName.length <= maxLength) return fileName;
-    
-    // Para archivos subidos, mantener el prefijo y extensión
-    if (fileName.startsWith('uploaded_')) {
-      const parts = fileName.match(/^(uploaded_\d+_)(.+)(\.\w+)$/);
-      if (parts) {
-        const [, prefix, name, ext] = parts;
-        const maxNameLength = maxLength - prefix.length - ext.length - 3; // 3 for '...'
-        if (name.length > maxNameLength) {
-          return prefix + name.substring(0, maxNameLength) + '...' + ext;
-        }
-      }
-    }
-    
-    // Para otros archivos, mantener extensión
     const lastDotIndex = fileName.lastIndexOf('.');
     if (lastDotIndex > 0) {
       const name = fileName.substring(0, lastDotIndex);
@@ -441,130 +486,99 @@ function App() {
         return name.substring(0, maxNameLength) + '...' + ext;
       }
     }
-    
-    // Fallback para archivos sin extensión
     return fileName.substring(0, maxLength - 3) + '...';
   };
 
-  const playAudio = (path: string) => {
-    if (playingAudio === path) {
-      setPlayingAudio(null);
-    } else {
-      setPlayingAudio(path);
-    }
-  };
+  // Estado visual: combina Firestore + estado local para feedback inmediato
+  const isTranscribing = (rec: RecordingDoc) =>
+    rec.transcription.status === 'processing' || pendingTranscriptions.has(rec.id);
+  const isReviewing = (rec: RecordingDoc) =>
+    rec.revision.status === 'processing' || pendingReviews.has(rec.id);
+  const hasTranscription = (rec: RecordingDoc) =>
+    rec.transcription.status === 'completed' && rec.transcription.text;
+  const hasRevision = (rec: RecordingDoc) =>
+    rec.revision.status === 'completed' && rec.revision.text;
 
   return (
     <div className="App">
       <header className="App-header">
-        <h1>System Audio Recorder con Transcripción</h1>
+        <h1>Audio Recorder con Transcripción</h1>
+        <div className="user-bar">
+          <span className="user-email">{user.email}</span>
+          <a
+            href="https://console.firebase.google.com/project/audio-recorder-mg/authentication/users"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="admin-button"
+            title="Administrar usuarios"
+          >
+            <Settings size={16} />
+          </a>
+          <button className="signout-button" onClick={onSignOut}>
+            <LogOut size={16} />
+            Cerrar Sesión
+          </button>
+        </div>
       </header>
-      
+
       <main className="App-main">
         <div className="recording-section">
-          {/* Selector de fuente de grabación */}
-          <div className="source-selector" style={{ marginBottom: '20px' }}>
-            <label style={{ marginRight: '10px' }}>Fuente de grabación:</label>
-            <button 
-              onClick={() => setRecordingSource('mic')}
-              style={{ 
-                backgroundColor: recordingSource === 'mic' ? '#4CAF50' : '#555',
-                color: 'white',
-                padding: '8px 16px',
-                margin: '0 5px',
-                border: 'none',
-                borderRadius: '5px',
-                cursor: 'pointer'
-              }}
-            >
-              <Mic size={16} style={{ marginRight: '5px', verticalAlign: 'middle' }} />
-              Micrófono
-            </button>
-            <button 
-              onClick={() => setRecordingSource('zoom')}
-              style={{ 
-                backgroundColor: recordingSource === 'zoom' ? '#2196F3' : '#555',
-                color: 'white',
-                padding: '8px 16px',
-                margin: '0 5px',
-                border: 'none',
-                borderRadius: '5px',
-                cursor: 'pointer'
-              }}
-            >
-              <Video size={16} style={{ marginRight: '5px', verticalAlign: 'middle' }} />
-              Zoom
-            </button>
-            <button 
-              onClick={() => setRecordingSource('teams')}
-              style={{ 
-                backgroundColor: recordingSource === 'teams' ? '#5B5FC7' : '#555',
-                color: 'white',
-                padding: '8px 16px',
-                margin: '0 5px',
-                border: 'none',
-                borderRadius: '5px',
-                cursor: 'pointer'
-              }}
-            >
-              <Users size={16} style={{ marginRight: '5px', verticalAlign: 'middle' }} />
-              Teams
-            </button>
-          </div>
-
           <div className="recording-controls">
-            {!isRecording ? (
-              <button 
+            {!recorder.isRecording ? (
+              <button
                 className="record-button"
-                onClick={startRecording}
-                disabled={!socket}
+                onClick={handleStartRecording}
+                disabled={isUploading}
               >
                 <Mic size={24} />
                 Iniciar Grabación
               </button>
             ) : (
-              <button 
+              <button
                 className="stop-button"
-                onClick={stopRecording}
+                onClick={handleStopRecording}
               >
                 <Square size={24} />
                 Detener Grabación
               </button>
             )}
-            
-            {isRecording && (
+
+            {recorder.isRecording && (
               <div className="recording-indicator">
                 <span className="recording-dot"></span>
-                <span className="recording-time">{formatDuration(recordingDuration)}</span>
+                <span className="recording-time">{formatDuration(recorder.duration)}</span>
               </div>
             )}
           </div>
-          
-          {isRecording && (
+
+          {recorder.isRecording && (
             <div className="visualizer-container">
-              <AudioVisualizer isRecording={isRecording} />
+              <AudioVisualizer isRecording={recorder.isRecording} stream={recorder.stream} />
             </div>
           )}
-          
-          {error && (
-            <div className="error-message">
-              Error: {error}
+
+          {isUploading && (
+            <div className="upload-progress-bar">
+              <div className="upload-progress-bar-fill" style={{ width: `${uploadProgress}%` }} />
+              <span className="upload-progress-text">
+                Subiendo... {uploadProgress > 0 ? `${Math.round(uploadProgress)}%` : ''}
+              </span>
             </div>
           )}
 
           {/* Botón para subir archivos */}
           <div className="upload-section" style={{ marginTop: '20px' }}>
-            <input 
+            <input
               ref={fileInputRef}
-              type="file" 
+              type="file"
               accept=".wav,.mp3,.mp4,.m4a,.ogg,.webm,.flac"
               onChange={handleFileUpload}
               style={{ display: 'none' }}
               id="audio-upload"
             />
-            <label 
+            <label
               htmlFor="audio-upload"
-              style={{ 
+              style={{
                 backgroundColor: '#FF9800',
                 color: 'white',
                 padding: '12px 24px',
@@ -592,145 +606,34 @@ function App() {
           </div>
         </div>
 
-        {/* Panel de Progreso */}
-        {progressMessages.length > 0 && (
-          <div style={{
-            position: 'fixed',
-            bottom: '20px',
-            right: '20px',
-            backgroundColor: 'rgba(30, 30, 30, 0.95)',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '12px',
-            padding: '16px',
-            maxWidth: '400px',
-            boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
-            zIndex: 1000
-          }}>
-            <div style={{ 
-              marginBottom: '12px', 
-              fontSize: '14px', 
-              fontWeight: 'bold',
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}>
-              <span style={{ 
-                fontSize: '20px',
-                display: 'inline-block',
-                animation: 'spin 2s linear infinite'
-              }}>⚙️</span>
-              Progreso de Procesamiento
-              <span style={{
-                display: 'inline-flex',
-                gap: '2px',
-                marginLeft: 'auto'
-              }}>
-                <span style={{ 
-                  width: '4px', 
-                  height: '4px', 
-                  backgroundColor: '#4CAF50',
-                  borderRadius: '50%',
-                  animation: 'pulse 1.4s infinite',
-                  animationDelay: '0s'
-                }}/>
-                <span style={{ 
-                  width: '4px', 
-                  height: '4px', 
-                  backgroundColor: '#4CAF50',
-                  borderRadius: '50%',
-                  animation: 'pulse 1.4s infinite',
-                  animationDelay: '0.2s'
-                }}/>
-                <span style={{ 
-                  width: '4px', 
-                  height: '4px', 
-                  backgroundColor: '#4CAF50',
-                  borderRadius: '50%',
-                  animation: 'pulse 1.4s infinite',
-                  animationDelay: '0.4s'
-                }}/>
-              </span>
+        {/* Panel de Progreso de Transcripción (via Firestore real-time) */}
+        {recordings.some(r => isTranscribing(r)) && (
+          <div className="progress-panel">
+            <div className="progress-panel-header">
+              <Loader size={16} className="spinning" />
+              Procesando transcripción
             </div>
-            
-            {progressMessages.slice(-3).map((msg) => (
-              <div key={msg.id} style={{
-                marginBottom: '8px',
-                padding: '8px',
-                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                borderRadius: '8px',
-                animation: 'slideIn 0.3s ease-out'
-              }}>
-                <div style={{ 
-                  display: 'flex', 
-                  alignItems: 'center',
-                  gap: '8px',
-                  marginBottom: '4px'
-                }}>
-                  <span style={{ fontSize: '24px' }}>{msg.emoji}</span>
-                  <span style={{ color: '#fff', fontSize: '13px', fontWeight: '500' }}>
-                    {msg.message}
-                  </span>
+
+            {recordings.filter(r => isTranscribing(r)).map((rec) => (
+              <div key={rec.id} className="progress-panel-item">
+                <div className="progress-panel-filename">
+                  {truncateFileName(rec.originalName || rec.fileName, 35)}
                 </div>
-                <div style={{ 
-                  color: 'rgba(255, 255, 255, 0.7)', 
-                  fontSize: '11px',
-                  marginLeft: '32px'
-                }}>
-                  {msg.details}
+                <div className="progress-panel-message">
+                  {pendingTranscriptions.has(rec.id) && rec.transcription.status === 'pending'
+                    ? 'Conectando con el servicio...'
+                    : rec.transcription.progressMessage || 'Procesando...'}
                 </div>
-                {msg.progress && (
-                  <div style={{ 
-                    marginTop: '6px',
-                    marginLeft: '32px',
-                    height: '4px',
-                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                    borderRadius: '2px',
-                    overflow: 'hidden'
-                  }}>
-                    <div style={{
-                      width: `${msg.progress}%`,
-                      height: '100%',
-                      backgroundColor: '#4CAF50',
-                      transition: 'width 0.5s ease',
-                      borderRadius: '2px'
-                    }}/>
+                {rec.transcription.progress > 0 && (
+                  <div className="progress-panel-bar">
+                    <div
+                      className="progress-panel-bar-fill"
+                      style={{ width: `${rec.transcription.progress}%` }}
+                    />
                   </div>
                 )}
               </div>
             ))}
-            
-            <style>{`
-              @keyframes slideIn {
-                from {
-                  opacity: 0;
-                  transform: translateY(10px);
-                }
-                to {
-                  opacity: 1;
-                  transform: translateY(0);
-                }
-              }
-              @keyframes spin {
-                from {
-                  transform: rotate(0deg);
-                }
-                to {
-                  transform: rotate(360deg);
-                }
-              }
-              @keyframes pulse {
-                0%, 100% {
-                  opacity: 0.3;
-                  transform: scale(0.8);
-                }
-                50% {
-                  opacity: 1;
-                  transform: scale(1.2);
-                }
-              }
-            `}</style>
           </div>
         )}
 
@@ -741,26 +644,42 @@ function App() {
           ) : (
             <div className="recordings-list">
               {recordings.map((recording) => (
-                <div key={recording.name} className="recording-item-container">
+                <div key={recording.id} className="recording-item-container">
                   <div className="recording-item">
                     <div className="recording-info">
-                      <span className="recording-name" title={recording.name}>
-                        {truncateFileName(recording.name)}
+                      <span className="recording-name" title={recording.fileName}>
+                        {truncateFileName(recording.originalName || recording.fileName)}
                       </span>
                       <span className="recording-meta">
-                        {formatFileSize(recording.size)} • {new Date(recording.createdAt).toLocaleString()}
+                        {formatFileSize(recording.size)} • {recording.createdAt?.toDate?.()
+                          ? new Date(recording.createdAt.toDate()).toLocaleString()
+                          : ''}
                       </span>
                     </div>
                     <div className="recording-actions">
-                      {transcribingFiles.has(recording.name) ? (
+                      {isTranscribing(recording) ? (
                         <div className="transcribing-indicator">
                           <Loader size={20} className="spinning" />
-                          <span>Transcribiendo...</span>
+                          <span>
+                            {pendingTranscriptions.has(recording.id) && recording.transcription.status === 'pending'
+                              ? 'Enviando...'
+                              : 'Transcribiendo...'}
+                          </span>
                         </div>
-                      ) : !recording.transcription ? (
+                      ) : recording.transcription.status === 'error' ? (
                         <button
                           className="action-button transcribe"
-                          onClick={() => transcribeRecording(recording.name)}
+                          onClick={() => handleTranscribe(recording)}
+                          disabled={busyActions.has(`transcribe-${recording.id}`)}
+                          title="Reintentar transcripción"
+                        >
+                          <FileText size={20} />
+                        </button>
+                      ) : !hasTranscription(recording) ? (
+                        <button
+                          className="action-button transcribe"
+                          onClick={() => handleTranscribe(recording)}
+                          disabled={busyActions.has(`transcribe-${recording.id}`)}
                           title="Transcribir"
                         >
                           <FileText size={20} />
@@ -768,59 +687,77 @@ function App() {
                       ) : (
                         <button
                           className="action-button transcription-toggle"
-                          onClick={() => toggleTranscription(recording.name)}
+                          onClick={() => toggleTranscription(recording.id)}
                           title="Ver transcripción"
                         >
                           <FileText size={20} />
                         </button>
                       )}
-                      
+
                       <button
                         className="action-button play"
-                        onClick={() => playAudio(recording.path)}
+                        onClick={() => playAudio(recording)}
                         title="Reproducir"
                       >
-                        {playingAudio === recording.path ? <Pause size={20} /> : <Play size={20} />}
+                        {playingAudio === recording.id ? <Pause size={20} /> : <Play size={20} />}
                       </button>
-                      
-                      <a
-                        href={`http://localhost:${process.env.REACT_APP_BACKEND_PORT || '5001'}${recording.path}`}
-                        download={recording.name}
+
+                      <button
                         className="action-button download"
+                        onClick={() => downloadAudio(recording)}
                         title="Descargar audio"
+                        disabled={busyActions.has(`download-${recording.id}`)}
                       >
                         <Download size={20} />
-                      </a>
-                      
+                      </button>
+
                       <button
                         className="action-button delete"
-                        onClick={() => deleteRecording(recording.name)}
+                        onClick={() => handleDelete(recording)}
+                        disabled={busyActions.has(`delete-${recording.id}`)}
                         title="Eliminar"
                       >
                         <Trash2 size={20} />
                       </button>
                     </div>
                   </div>
-                  
-                  {recording.transcription && expandedTranscriptions.has(recording.name) && (
+
+                  {/* Error de transcripción inline */}
+                  {recording.transcription.status === 'error' && (
+                    <div className="recording-error-banner">
+                      <AlertCircle size={14} />
+                      Error en transcripción: {recording.transcription.error}
+                      <button
+                        className="recording-error-retry"
+                        onClick={() => handleTranscribe(recording)}
+                        disabled={busyActions.has(`transcribe-${recording.id}`)}
+                      >
+                        Reintentar
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Sección de transcripción expandida */}
+                  {hasTranscription(recording) && expandedTranscriptions.has(recording.id) && (
                     <div className="transcription-section">
                       <div className="transcription-header">
                         <h4>Transcripción Original</h4>
                         <div className="transcription-actions">
-                          <CopyToClipboard 
-                            text={recording.transcription}
-                            onCopy={() => handleCopy(recording.transcription!)}
+                          <CopyToClipboard
+                            text={recording.transcription.text!}
+                            onCopy={() => handleCopy(recording.transcription.text!)}
                           >
                             <button className="transcription-button" title="Copiar texto original">
                               <Copy size={16} />
-                              {copiedText === recording.transcription ? 'Copiado!' : 'Copiar'}
+                              {copiedText === recording.transcription.text ? 'Copiado!' : 'Copiar'}
                             </button>
                           </CopyToClipboard>
-                          
-                          {!revisedTexts.has(recording.name) && !reviewingFiles.has(recording.name) && (
-                            <button 
+
+                          {!hasRevision(recording) && !isReviewing(recording) && (
+                            <button
                               className="transcription-button"
-                              onClick={() => reviewText(recording.name, recording.transcription!)}
+                              onClick={() => handleReview(recording)}
+                              disabled={busyActions.has(`review-${recording.id}`)}
                               title="Revisar y editar texto con IA"
                               style={{ backgroundColor: '#4CAF50' }}
                             >
@@ -828,9 +765,9 @@ function App() {
                               Revisar y Editar Texto
                             </button>
                           )}
-                          
-                          {reviewingFiles.has(recording.name) && (
-                            <button 
+
+                          {isReviewing(recording) && (
+                            <button
                               className="transcription-button"
                               disabled
                               style={{ backgroundColor: '#666' }}
@@ -839,26 +776,26 @@ function App() {
                               Revisando...
                             </button>
                           )}
-                          
-                          {revisedTexts.has(recording.name) && (
-                            <button 
+
+                          {hasRevision(recording) && (
+                            <button
                               className="transcription-button"
-                              onClick={() => toggleRevisedText(recording.name)}
-                              title={showRevisedText.has(recording.name) ? "Ver texto original" : "Ver texto revisado"}
+                              onClick={() => toggleRevisedText(recording.id)}
+                              title={showRevisedText.has(recording.id) ? "Ver texto original" : "Ver texto revisado"}
                               style={{ backgroundColor: '#2196F3' }}
                             >
                               <FileText size={16} />
-                              {showRevisedText.has(recording.name) ? 'Ver Original' : 'Ver Revisado'}
+                              {showRevisedText.has(recording.id) ? 'Ver Original' : 'Ver Revisado'}
                             </button>
                           )}
-                          
-                          <button 
+
+                          <button
                             className="transcription-button"
-                            onClick={() => downloadTranscription(recording.name)}
+                            onClick={() => downloadTranscription(recording)}
                             title="Descargar transcripción"
-                            disabled={downloadingFile === recording.name}
+                            disabled={downloadingFile === recording.id}
                           >
-                            {downloadingFile === recording.name ? (
+                            {downloadingFile === recording.id ? (
                               <>
                                 <Loader size={16} className="spinning" />
                                 Descargando...
@@ -872,10 +809,10 @@ function App() {
                           </button>
                         </div>
                       </div>
-                      
-                      {!showRevisedText.has(recording.name) ? (
+
+                      {!showRevisedText.has(recording.id) ? (
                         <div className="transcription-text">
-                          {recording.transcription}
+                          {recording.transcription.text}
                         </div>
                       ) : (
                         <>
@@ -883,24 +820,24 @@ function App() {
                             <div className="transcription-header">
                               <h4 style={{ color: '#4CAF50' }}>Texto Revisado y Editado</h4>
                               <div className="transcription-actions">
-                                <CopyToClipboard 
-                                  text={revisedTexts.get(recording.name) || ''}
-                                  onCopy={() => handleCopy(revisedTexts.get(recording.name) || '')}
+                                <CopyToClipboard
+                                  text={recording.revision.text || ''}
+                                  onCopy={() => handleCopy(recording.revision.text || '')}
                                 >
                                   <button className="transcription-button" title="Copiar texto revisado">
                                     <Copy size={16} />
-                                    {copiedText === revisedTexts.get(recording.name) ? 'Copiado!' : 'Copiar Revisado'}
+                                    {copiedText === recording.revision.text ? 'Copiado!' : 'Copiar Revisado'}
                                   </button>
                                 </CopyToClipboard>
-                                
-                                <button 
+
+                                <button
                                   className="transcription-button"
-                                  onClick={() => downloadRevisedText(recording.name)}
+                                  onClick={() => downloadTranscription(recording, true)}
                                   title="Descargar texto revisado"
-                                  disabled={downloadingFile === recording.name}
+                                  disabled={downloadingFile === recording.id}
                                   style={{ backgroundColor: '#4CAF50' }}
                                 >
-                                  {downloadingFile === recording.name ? (
+                                  {downloadingFile === recording.id ? (
                                     <>
                                       <Loader size={16} className="spinning" />
                                       Descargando...
@@ -915,16 +852,16 @@ function App() {
                               </div>
                             </div>
                             <div className="transcription-text" style={{ backgroundColor: 'rgba(76, 175, 80, 0.1)', border: '1px solid #4CAF50' }}>
-                              {revisedTexts.get(recording.name)}
+                              {recording.revision.text}
                             </div>
                           </div>
-                          
+
                           <div style={{ marginTop: '20px' }}>
                             <div className="transcription-header">
                               <h4 style={{ color: '#888' }}>Transcripción Original</h4>
                             </div>
                             <div className="transcription-text" style={{ opacity: 0.7 }}>
-                              {recording.transcription}
+                              {recording.transcription.text}
                             </div>
                           </div>
                         </>
@@ -937,14 +874,35 @@ function App() {
           )}
         </div>
 
-        {playingAudio && (
+        {playingURL && (
           <audio
-            src={`http://localhost:${process.env.REACT_APP_BACKEND_PORT || '5001'}${playingAudio}`}
+            src={playingURL}
             autoPlay
-            onEnded={() => setPlayingAudio(null)}
+            onEnded={() => { setPlayingAudio(null); setPlayingURL(null); }}
           />
         )}
       </main>
+
+      {/* Sistema de Toasts */}
+      <div className="toast-container">
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast toast-${toast.type}`}>
+            <div className="toast-icon">
+              {toast.type === 'loading' && <Loader size={18} className="spinning" />}
+              {toast.type === 'success' && <CheckCircle size={18} />}
+              {toast.type === 'error' && <AlertCircle size={18} />}
+              {toast.type === 'info' && <Info size={18} />}
+            </div>
+            <div className="toast-content">
+              <div className="toast-message">{toast.message}</div>
+              {toast.detail && <div className="toast-detail">{toast.detail}</div>}
+            </div>
+            <button className="toast-close" onClick={() => removeToast(toast.id)}>
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -33,11 +33,8 @@
     },
     "files": [
       "electron-main.js",
-      "backend/**/*",
       "frontend/build/**/*",
       "assets/**/*",
-      "recordings/.gitkeep",
-      "transcriptions/.gitkeep",
       "node_modules/**/*",
       "!**/*.map",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
@@ -49,6 +46,11 @@
       {
         "from": "backend/.env",
         "to": ".env"
+      },
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": ["**/*", "!.env"]
       }
     ],
     "mac": {

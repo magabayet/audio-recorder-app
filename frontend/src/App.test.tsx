@@ -1,9 +1,11 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+test('renders login screen when not authenticated', async () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  // Esperar a que el auth listener resuelva y muestre el login
+  await waitFor(() => {
+    expect(screen.getByText(/Inicia sesión para continuar/i)).toBeInTheDocument();
+  }, { timeout: 3000 });
 });
